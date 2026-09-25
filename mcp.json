@@ -1,0 +1,11 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "tradingbot_knowledge": {
+      "type": "stdio",
+      "command": "python",
+      "args": ["-B", "scripts/launch_mcp.py"],
+      "cwd": "./"
+    }
+  }
+}

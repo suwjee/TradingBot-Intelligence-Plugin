@@ -1,0 +1,26 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "tradingbot-intelligence",
+  "version": "0.1.3",
+  "description": "Read the standalone TradingBot Knowledge Vault with source, authority, and RAW provenance checks.",
+  "author": {
+    "name": "TradingBot Project"
+  },
+  "keywords": ["tradingbot", "knowledge-vault", "source-evidence"],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "TradingBot Knowledge",
+        "shortDescription": "Source-grounded TradingBot knowledge",
+        "longDescription": "Inspect the standalone TradingBot Knowledge Vault, its retained source evidence, and RAW provenance with explicit authority boundaries.",
+        "developerName": "TradingBot Project",
+        "category": "Productivity",
+        "capabilities": ["Read"],
+        "defaultPrompt": [
+          "Use TradingBot Knowledge to explain an algorithm and cite retained Vault source evidence.",
+          "Check what the Vault can currently verify about Order_A and its pending dependencies."
+        ]
+      }
+    }
+  }
+}
