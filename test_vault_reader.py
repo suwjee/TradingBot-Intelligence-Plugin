@@ -64,7 +64,7 @@ class VaultReaderTests(unittest.TestCase):
             self.assertFalse(result["ok"])
             self.assertIn("_INDEX/relations.json", result["failures"])
 
-    def test_verify_rejects_normative_trading_rule_without_reference(self) -> None:
+    def test_verify_rejects_missing_reference_registry(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             index = root / "_INDEX"
@@ -83,7 +83,7 @@ class VaultReaderTests(unittest.TestCase):
             with patch.object(reader, "ROOT", root):
                 result = reader.verify_package()
             self.assertFalse(result["ok"])
-            self.assertIn("normative_trading_rule_without_reference", result["failures"])
+            self.assertIn("reference_registry_invalid", result["failures"])
 
     def test_verify_rejects_unpinned_source_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -116,7 +116,7 @@ class VaultReaderTests(unittest.TestCase):
             raw.write_text("[]\n", encoding="utf-8")
             with patch.object(reader, "ROOT", root):
                 result = reader.verify_package()
-            self.assertTrue(result["verified_pins_ok"])
+            self.assertIn("incomplete_engine_source_coverage", result["failures"])
             self.assertFalse(result["inventory_complete"])
             self.assertFalse(result["ok"])
             self.assertEqual(result["unregistered_raw_files"], ["08_DATA/Raw/XAUUSD/extra.json"])
@@ -162,10 +162,57 @@ class VaultReaderTests(unittest.TestCase):
     def test_rule_retrieval_and_relations(self) -> None:
         self.assertIn("algorithm.order.a", [row["id"] for row in reader.search("Order_A", 20)])
         note = reader.get_entity("algorithm.order.a")
-        self.assertEqual(note["authority"], "empirical")
+        self.assertEqual(note["authority"], "normative")
         self.assertIn("Order_A", note["content"])
         self.assertTrue(reader.relations("algorithm.order.a")["outgoing"])
         self.assertEqual(reader.get_entity("algorithm.stopall")["authority"], "non-canonical")
+
+    def test_known_invalid_order_routes_are_explicitly_quarantined(self) -> None:
+        self.assertNotIn("algorithm.order.b", [row["id"] for row in reader.search("Order_B", 25)])
+        explicit = reader.search("Order_B", 25, include_quarantined=True)
+        self.assertIn("algorithm.order.b", [row["id"] for row in explicit])
+        note = reader.get_entity("algorithm.order.b")
+        self.assertEqual(note["status"], "pending-fix")
+        self.assertFalse(note["valid_for_reasoning"])
+        self.assertIn("Known-invalid", note["warning"])
+        self.assertEqual(reader.search("OrderAudit"), [])
+        with self.assertRaises(ValueError):
+            reader.get_entity("algorithm.orderaudit")
+        self.assertEqual(reader.relations("algorithm.order.b")["outgoing"], [])
+        self.assertTrue(reader.relations("algorithm.order.b", include_quarantined=True)["outgoing"])
+
+    def test_optional_reference_requires_exact_hash(self) -> None:
+        from unittest.mock import patch
+        import tempfile
+        import hashlib
+        from pathlib import Path
+        with patch.dict("os.environ", {"TRADINGBOT_ENGINE_ROOT": ""}):
+            with self.assertRaisesRegex(ValueError, "TRADINGBOT_ENGINE_ROOT"):
+                reader.read_algorithm_reference_evidence("bullish_hpzr6", 29, 1)
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "engine/algorithms/ref.md"
+            path.parent.mkdir(parents=True)
+            payload = b"accepted Order_A\ncurrent Order_B\n"
+            path.write_bytes(payload)
+            registry = {"references": [{"id": "test_ref", "repository_relative_path": "engine/algorithms/ref.md",
+                                        "sha256": hashlib.sha256(payload).hexdigest(), "bytes": len(payload),
+                                        "version": "test", "authority_scope": "diagnostic",
+                                        "known_invalid_sections": ["Order_B"], "inactive_sections": []}]}
+            with patch.dict("os.environ", {"TRADINGBOT_ENGINE_ROOT": temporary}):
+                with patch.object(reader, "_reference_registry", return_value=registry):
+                    evidence = reader.read_algorithm_reference_evidence("test_ref", 1, 1)
+                    self.assertIn("Order_A", evidence["lines"][0]["text"])
+                    path.write_bytes(b"changed\n")
+                    with self.assertRaisesRegex(ValueError, "identity differs"):
+                        reader.read_algorithm_reference_evidence("test_ref", 1, 1)
+
+    def test_reference_registry_and_mixed_source_are_labeled(self) -> None:
+        registry = reader._reference_registry()
+        self.assertEqual({row["id"] for row in registry["references"]},
+                         {"bullish_hpzr6", "bearish_hpzr6"})
+        evidence = reader.read_evidence("06_SOURCE/Code/engine/pipeline/e_zone_detector.py", 499, 1)
+        self.assertEqual(evidence["authority"], "executable")
+        self.assertIn("known-invalid", evidence["warning"])
 
     def test_evidence_is_local_and_hash_pinned(self) -> None:
         evidence = reader.read_evidence("06_SOURCE/Code/engine/pipeline/reaction_engine.py", 2250, 9)
@@ -193,6 +240,31 @@ class VaultReaderTests(unittest.TestCase):
         self.assertEqual(result["ok"], result["inventory_complete"])
         self.assertEqual(result["verified_datasets"], 7)
         self.assertEqual(result["verified_windows"], 3)
+
+    def test_knowledge_mode_does_not_require_raw_bytes(self) -> None:
+        original_is_file = Path.is_file
+        original_read_bytes = Path.read_bytes
+
+        def unavailable_raw(path: Path) -> bool:
+            if "08_DATA/Raw/" in path.as_posix() and path.suffix == ".json":
+                return False
+            return original_is_file(path)
+
+        def reject_raw_read(path: Path) -> bytes:
+            if "08_DATA/Raw/" in path.as_posix() and path.suffix == ".json":
+                raise AssertionError("RAW bytes were read in knowledge mode")
+            return original_read_bytes(path)
+
+        with patch.object(Path, "is_file", unavailable_raw), \
+                patch.object(Path, "read_bytes", reject_raw_read), \
+                patch.object(reader, "get_dataset", side_effect=AssertionError("RAW dataset read")), \
+                patch.object(reader, "get_window", side_effect=AssertionError("RAW window read")):
+            result = reader.verify_package(mode="knowledge")
+        self.assertTrue(result["ok"], result["failures"])
+        self.assertEqual(result["data_status"], "NOT_RUN")
+        self.assertIsNone(result["inventory_complete"])
+        self.assertEqual(result["registered_datasets"], 7)
+        self.assertEqual(result["registered_windows"], 3)
 
     def test_retained_window_is_not_a_physical_dataset(self) -> None:
         window = reader.get_entity("data.window_0291455b")

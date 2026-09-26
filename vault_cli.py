@@ -17,22 +17,30 @@ def main() -> int:
     search = sub.add_parser("search")
     search.add_argument("query")
     search.add_argument("--limit", type=int, default=8)
+    search.add_argument("--include-quarantined", action="store_true")
     for command in ("entity", "relations", "dataset", "window"):
         sub.add_parser(command).add_argument("id")
+    sub.choices["relations"].add_argument("--include-quarantined", action="store_true")
     evidence = sub.add_parser("evidence")
     evidence.add_argument("path")
     evidence.add_argument("--start", type=int, default=1)
     evidence.add_argument("--count", type=int, default=40)
-    sub.add_parser("verify")
+    reference = sub.add_parser("reference-evidence")
+    reference.add_argument("id")
+    reference.add_argument("--start", type=int, default=1)
+    reference.add_argument("--count", type=int, default=40)
+    verify = sub.add_parser("verify")
+    verify.add_argument("--mode", choices=("knowledge", "full-data"), default="full-data")
     args = parser.parse_args()
     try:
-        result = {"search": lambda: reader.search(args.query, args.limit),
+        result = {"search": lambda: reader.search(args.query, args.limit, args.include_quarantined),
                   "entity": lambda: reader.get_entity(args.id),
-                  "relations": lambda: reader.relations(args.id),
+                  "relations": lambda: reader.relations(args.id, args.include_quarantined),
                   "dataset": lambda: reader.get_dataset(args.id),
                   "window": lambda: reader.get_window(args.id),
                   "evidence": lambda: reader.read_evidence(args.path, args.start, args.count),
-                  "verify": reader.verify_package}[args.command]()
+                  "reference-evidence": lambda: reader.read_algorithm_reference_evidence(args.id, args.start, args.count),
+                  "verify": lambda: reader.verify_package(args.mode)}[args.command]()
     except (ValueError, OSError, KeyError, json.JSONDecodeError) as exc:
         print(json.dumps({"error": str(exc)}, ensure_ascii=False), file=sys.stderr)
         return 1

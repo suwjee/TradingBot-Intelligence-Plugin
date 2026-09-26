@@ -9,9 +9,9 @@ mcp = MCPServer("TradingBot Knowledge")
 
 
 @mcp.tool()
-def search_knowledge(query: str, limit: int = 8) -> list[dict]:
-    """Find Vault knowledge notes by ID, title and content; inspect authority before using a rule."""
-    return reader.search(query, limit)
+def search_knowledge(query: str, limit: int = 8, include_quarantined: bool = False) -> list[dict]:
+    """Search knowledge; known-invalid Order_B/C require explicit include_quarantined."""
+    return reader.search(query, limit, include_quarantined)
 
 
 @mcp.tool()
@@ -21,9 +21,9 @@ def get_knowledge(entity_id: str) -> dict:
 
 
 @mcp.tool()
-def trace_relations(entity_id: str) -> dict:
-    """Get incoming and outgoing ID relations for a Vault entity."""
-    return reader.relations(entity_id)
+def trace_relations(entity_id: str, include_quarantined: bool = False) -> dict:
+    """Trace authority-labelled relations; hide known-invalid routes by default."""
+    return reader.relations(entity_id, include_quarantined)
 
 
 @mcp.tool()
@@ -45,9 +45,15 @@ def read_source_evidence(path: str, start_line: int = 1, line_count: int = 40) -
 
 
 @mcp.tool()
-def verify_vault() -> dict:
-    """Check indexed notes, pinned evidence and RAW windows, and report unregistered physical RAW files."""
-    return reader.verify_package()
+def read_algorithm_reference_evidence(reference_id: str, start_line: int = 1, line_count: int = 40) -> dict:
+    """Optionally read a hash-verified HPZR6 reference using TRADINGBOT_ENGINE_ROOT; B/C remain known-invalid."""
+    return reader.read_algorithm_reference_evidence(reference_id, start_line, line_count)
+
+
+@mcp.tool()
+def verify_vault(mode: str = "full-data") -> dict:
+    """Check knowledge-only integrity or full Vault RAW/fixture data integrity."""
+    return reader.verify_package(mode)
 
 
 if __name__ == "__main__":

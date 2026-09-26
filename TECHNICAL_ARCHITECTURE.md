@@ -1,6 +1,6 @@
 # TradingBot Intelligence Plugin and Knowledge Vault — Technical Architecture
 
-**Snapshot date:** 2026-09-25  
+**Snapshot date:** 2026-09-26
 **Audience:** engineers and AI agents implementing, reviewing, deploying, or extending the knowledge system  
 **Scope:** the independent `TradingBot-Knowledge` Vault and `tradingbot-intelligence` reader/maintainer plugin  
 **Evidence convention:** “implemented” means observed in retained or plugin code; “documented” means asserted by a Vault note; “pending” means the Vault cannot currently establish a complete rule or runtime result.
@@ -28,13 +28,13 @@ flowchart LR
   H --> U
 ```
 
-The source of a trading rule is the original Python implementation plus a reviewed algorithm reference. The Vault records a bounded snapshot of that source and the state of review. A generated graph, test fixture, RAW hash, or current calculation output cannot silently become an accepted rule. The Vault currently lacks the comprehensive directional references and several mixed-route engine modules, so its rule layer is deliberately marked pending in many places.
+Trading rule authority combines an explicit project decision, executable source evidence, reference evidence, and bounded empirical observations; a match between source and reference alone does not approve a rule. The Vault records a byte-exact snapshot of all nine main Engine modules and the state of review. A generated graph, test fixture, RAW hash, or current calculation output cannot silently become an accepted rule. The full HPZR6 references are registered by hash as optional external evidence, while current B/C semantics remain known-invalid.
 
 ## 2. Boundaries, trust, and terminology
 
 The **project plane** contains the live chart, bridge, and full Python pipeline. The **knowledge plane** is the Vault: Markdown entities, relational indexes, byte-pinned source excerpts, fixtures, and RAW data. The **access plane** is the plugin: it locates one Vault, validates paths and evidence, and exposes read-only functions. The **maintenance plane** is in the plugin directory but runs only for a maintainer with the original project. Its post-commit hook writes into the Vault; consumers do not need it.
 
-`Order_A` is the only retained physical order creation route. `Order_B` and `Order_C` source and algorithm material were intentionally removed pending a clean rewrite in the original project. This scope does **not** remove Reaction Mode A or Mode B, nor S Blue Type-1 through Type-4: those labels refer to different concepts. A fixture mentioning a later Mode-B reaction/order context must not be interpreted as reintroducing the excluded `Order_B` route. Some higher-stage notes mention E, StopAll, or OrderAudit as vocabulary and dependencies, but their complete implementation contract is not available in this Vault.
+`Order_A` is the accepted physical order creation route. `Order_B` and `Order_C` have `pending-fix/non-canonical` notes and exact current source evidence, but their implementations are known invalid by project decision; they are hidden from default search/relation traversal and cannot provide normative reasoning or approved regression baselines. Reaction Mode A/B and S Blue Type-1 through Type-4 are distinct concepts. E, lifecycle, and bridge snapshots are retained even though some regions depend on B/C. Audit output physically exists in exact source but has no indexed algorithm note or active validation authority.
 
 Use these meanings consistently:
 
@@ -42,7 +42,7 @@ Use these meanings consistently:
 | --- | --- |
 | `entity` | Stable `kind.name` ID for one Markdown knowledge note. A path locates it but is not its identity. |
 | `source snapshot` | Byte-exact retained file under `06_SOURCE/Code`, pinned by SHA-256 and size. This proves identity, not correctness. |
-| `reference` | Reviewed, comprehensive algorithm explanation. The current manifest has zero `algorithm_references`. |
+| `reference` | A Bullish or Bearish HPZR6 file identified in `06_SOURCE/References/registry.json` by repository-relative path, version, size and SHA-256; reading the full external file is optional. |
 | `dataset` | One registered physical RAW JSON byte stream, identified by full SHA-256. |
 | `window` | An inclusive epoch range within a retained parent RAW that reproduces a former smaller RAW byte for byte after defined serialization. |
 | `fixture` | A bounded historical or current scenario assertion; not a full approved output baseline. |
@@ -61,12 +61,12 @@ The Vault root is a self-contained package. Its notes and data use normalized pa
   01_CORE/            common identities, chronology, provenance, definitions
   02_MARKET_MODEL/    candles, legs, ranges, resets, and directional concepts
   03_BEHAVIORS/       A, S, E, StopAll and related behavior contracts
-  04_ALGORITHMS/      Reaction, Blue, A, S, E, StopAll, Order_A, RAW, audit
+  04_ALGORITHMS/      Reaction, Blue, A, S, E, StopAll, Order_A, quarantined Order_B/C, RAW
   05_MIRROR/          Bullish/Bearish relationships and open asymmetries
   06_SOURCE/
     Code/             pinned, byte-exact Python/JavaScript snapshots
     Modules/          source-module knowledge notes
-    Pending/          unresolved or excluded source-module placeholders
+    References/       optional external HPZR6 reference registry
   07_VALIDATION/
     Fixtures/         case notes, registry, curated source, fixture model
     Invariants/       identity, chronology, numeric and lifecycle checks
@@ -90,9 +90,9 @@ The Vault root is a self-contained package. Its notes and data use normalized pa
   .git/              Vault Git repository metadata
 ```
 
-The folder number is navigation order, not execution order. Behavior notes classify externally meaningful A/S/E/StopAll states; Reaction, Reset, Blue Line, physical Order identity, and OrderAudit are represented in algorithms/evidence instead of being mislabeled Behaviors. Empty placeholders have no evidentiary status.
+The folder number is navigation order, not execution order. Behavior notes classify externally meaningful A/S/E/StopAll states; Reaction, Reset, Blue Line and physical Order identity are algorithm/evidence concepts rather than Behaviors. Audit output has no independent active knowledge entity. Empty placeholders have no evidentiary status.
 
-At this snapshot, `_INDEX/entities.json` contains **167** entities: 20 algorithm, 15 behavior, 22 case, 10 core, 27 data, 11 market, 10 mirror, 13 source, 8 system, and 31 test. There are **1,091** generated relations. The current status distribution is 28 active, 3 archived, 15 canonical, 15 draft, 105 pending, and 1 pending-fix. Authority distribution is 21 empirical, 6 executable, 3 historical, 121 non-canonical, and 16 normative. These counts describe what the Vault claims and indexes; they are not 167 accepted trading rules. Appendix A lists every entity and its file.
+At this snapshot, `_INDEX/entities.json` contains **169** entities: 21 algorithm, 15 behavior, 22 case, 10 core, 27 data, 11 market, 10 mirror, 14 source, 8 system, and 31 test. There are **1,102** generated relations. Status distribution is 31 active, 3 archived, 16 canonical, 15 draft, 102 pending, and 2 pending-fix. Authority distribution is 21 empirical, 9 executable, 3 historical, 119 non-canonical, and 17 normative. These counts describe indexed claims, not 169 accepted trading rules. Appendix A lists every entity and its file.
 
 ## 4. Entity format, schema, and generated indexes
 
@@ -132,15 +132,15 @@ Relations are typed `calculated_by`, `implemented_by`, `depends_on`, `produces`,
 
 Authority values are `normative` (accepted contract), `executable` (retained current source behavior), `empirical` (RAW, bounded fixture, or observation), `historical` (prior state), and `non-canonical` (unresolved/incomplete). The schema also allows `canonical` authority for mirror notes, but none is present in this snapshot. Status values include `canonical`, `active`, `draft`, `pending`, `proposed`, `pending-fix`, `deprecated`, `superseded`, and `archived`. Status and authority are separate: an active dataset can be empirical; an active case can be a bounded assertion; a canonical test note can state how to validate without proving a test was run.
 
-A robust answer follows **Behavior → Algorithm → Source → Validation → Data** as needed. Start with an entity search, read the note and its status/authority, traverse direct relations, inspect pinned line evidence for a specific claim, then inspect fixtures/RAW identity if discussing observed behavior. If the relevant source or a comprehensive reference is absent, report the precise missing dependency and keep the claim pending. No source snapshot or generated index should be treated as a normative rule automatically. A complete normative trading rule requires retained, reviewed source and an algorithm reference over its dependency chain; this Vault currently has zero comprehensive algorithm references. For conflicts, record both sides with version, path, anchor and hash, then seek a domain decision. A newer timestamp, fixture outcome, or current executable output cannot silently resolve that conflict.
+A robust answer follows **Behavior → Algorithm → Source → Validation → Data** as needed. Start with an entity search, read status/authority and `valid_for_reasoning`, traverse relevant relations, inspect hash-pinned source lines, then inspect fixture/RAW identity if discussing observed behavior. Order_B/C are excluded from default retrieval; explicit diagnostic access retains their warning. The two comprehensive references are registered by hash but optional at consumer runtime. Missing optional reference bytes must be stated when a claim needs direct reference verification. No snapshot or generated index becomes normative automatically. Order_A's bounded accepted first-owner rule has explicit project approval and source/reference evidence; B/C remain known-invalid even if source and references match. For conflicts, record both sides with version, path, anchor and hash, then seek a domain decision.
 
 The six current `active/empirical` cases carry `fixture_authority: Canonical` for their **specific bounded assertions**. Thirteen cases are pending and three are historical. No approved, full serialized-output regression baseline is in the Vault. Thus “fixture exists” and “algorithm end-to-end result is verified” are different statements.
 
 ## 6. Retained calculation and application evidence
 
-The original application architecture, as observed from project source and retained chart evidence, is browser chart → local Vite HTTP API/SSE → Python bridge → directional calculation pipeline → serialized JSON → API cache/rendering. The browser handles visual state and input selection; Python is the numerical calculation authority. Full-chart requests can pass the original RAW path to the bridge. A selected chart range can be filtered to inclusive chart-candle buckets in Node memory and streamed as JSON over a Windows named pipe. The bridge receives only that selected input, so state before the range does not exist for that run; this is a meaningful input/chronology boundary, not merely a display filter. The bridge itself is **absent** from the Vault, so its full orchestration and serialization cannot be independently reconstructed from this package alone.
+The original application architecture, as observed from project source and retained chart evidence, is browser chart → local Vite HTTP API/SSE → Python bridge → directional calculation pipeline → serialized JSON → API cache/rendering. The browser handles visual state and input selection; Python is the numerical calculation authority. Full-chart requests can pass the original RAW path to the bridge. A selected chart range can be filtered to inclusive chart-candle buckets in Node memory and streamed as JSON over a Windows named pipe. The bridge receives only that selected input, so state before the range does not exist for that run; this is a meaningful input/chronology boundary, not merely a display filter. The bridge is captured byte-exact in the Vault; source capture alone does not establish a fresh end-to-end numerical comparison.
 
-The retained Python snapshot set consists of nine manifest-listed files:
+The retained Python snapshot set consists of twelve manifest-listed files: nine main Engine modules and three package initializers.
 
 | Vault-local source | Bytes | SHA-256 | Evidentiary role |
 | --- | ---: | --- | --- |
@@ -151,10 +151,13 @@ The retained Python snapshot set consists of nine manifest-listed files:
 | `06_SOURCE/Code/engine/pipeline/blue_line_detector.py` | 15,802 | `6fa01d94bc98060b62bc7e68db0ec24a0b0159727d44043affee7130a9c11448` | Blue Line Fibonacci 0.618 and strike logic |
 | `06_SOURCE/Code/engine/pipeline/a_zone_detector.py` | 31,007 | `d7c33dd619ad7e4590027667a2c4e984c83be7b82fbfafeb5d7f944ddd521097` | A formation from Blue context |
 | `06_SOURCE/Code/engine/pipeline/s_zone_detector.py` | 65,869 | `7714025b3f43087b09844df6feeef4eef0ec72eeb841115293df4c126fd202ee` | S candidates and stopped-A first `Order_A` owner |
+| `06_SOURCE/Code/engine/pipeline/e_zone_detector.py` | 139,655 | `6becc792a17e40f572673bf65bc9818c9a957244de811be2823402d41c36e628` | E formation, accepted direct A routes, defective B/C-dependent paths |
+| `06_SOURCE/Code/engine/pipeline/lifecycle_engine.py` | 74,496 | `330e26ffc04c24dea952e9a1e8e39da1a434936d0f80ef2233bd279fc32e8af1` | StopAll, lifecycle, visibility and B-dependent filtering |
+| `06_SOURCE/Code/engine/bridge/trading_pipeline.py` | 111,984 | `a14b00ef08e3e97260b856ffe0dab8044cc70026d272e08e3d4350e9cff249cd` | RAW context, engine orchestration, serialization and output visibility |
 | `06_SOURCE/Code/engine/__init__.py` | 45 | `b8cf63f6eb68b0cdb2b05f1173d4e0d03ab01b68c54f7a26b29fb3180377de8c` | package boundary |
 | `06_SOURCE/Code/engine/bridge/__init__.py` | 64 | `2bc59770b9d4313c0e6306287d074487b9e1672dbaf3ada9a8be381e7123f0b8` | package boundary only, not the bridge |
 
-Three chart JavaScript files are supporting, also byte pinned: `apps/chart/server/indicator-range-input.js` (`bf9b2c5eac9457435f9aaed9615ca062dfabcb7541ca70fbf114c9dd2f1a419f`, 4,248 bytes), `apps/chart/server/raw-resource-store.js` (`4b34716fc1537f6983d9b2d8200561fa65819180f1033d71dad978c8328c3baa`, 17,253 bytes), and `apps/chart/vite.config.js` (`9baf5c9745a96058e27b485b885dfc5a868e4256016d9ec38e14a442f7a5f58c`, 36,108 bytes). The manifest additionally pins one curated fixture-source Markdown file and five RAW sidecars. These twelve code files were byte-compared with the observed original project checkout at this snapshot; future project commits may change that relationship.
+Three chart JavaScript files are supporting, also byte pinned: `apps/chart/server/indicator-range-input.js` (`bf9b2c5eac9457435f9aaed9615ca062dfabcb7541ca70fbf114c9dd2f1a419f`, 4,248 bytes), `apps/chart/server/raw-resource-store.js` (`4b34716fc1537f6983d9b2d8200561fa65819180f1033d71dad978c8328c3baa`, 17,253 bytes), and `apps/chart/vite.config.js` (`9baf5c9745a96058e27b485b885dfc5a868e4256016d9ec38e14a442f7a5f58c`, 36,108 bytes). The manifest additionally pins one curated fixture-source Markdown file, five RAW sidecars, and the optional reference registry JSON. All fifteen code files were byte-compared with the observed original project checkout at this snapshot; future project commits may change that relationship.
 
 Conceptual retained stage graph:
 
@@ -164,16 +167,16 @@ flowchart LR
   R --> B[Blue Line]
   B --> A[A]
   A --> S[S and stopped-A Order_A owner]
-  S --> E[E: pending full source]
-  E --> L[StopAll/lifecycle: pending full source]
-  L --> O[OrderAudit/output: pending full contract]
+  S --> E[E: captured mixed source]
+  E --> L[StopAll/lifecycle: captured mixed source]
+  L --> O[Bridge serialization]
 ```
 
-The graph communicates dependency and source coverage, not a guaranteed execution trace. Exact Decimal semantics, strict inequalities, physical indices/times, source/parent identity, nulls, version fields, and order of serialized collections matter when implementing or comparing the real engine. Bullish and Bearish paths include specific asymmetries; they must be read from retained source, not generated by blind inversion. The retained source shows `Order_A` physical identity based on `(FirstIndex, BreakIndex)` and a first-owner decision for a stopped A. E, lifecycle, and the bridge are omitted because their present project files mix excluded routes; source notes in `06_SOURCE/Pending` preserve this gap without pretending to provide the code. `algorithm.orderaudit` is explicitly `pending-fix/non-canonical`. The current package cannot certify E/StopAll outcomes, the full output schema, or end-to-end numerical parity.
+The graph communicates dependency and source coverage, not a guaranteed execution trace. Exact Decimal semantics, strict inequalities, physical indices/times, source/parent identity, nulls, version fields, and order of serialized collections matter when implementing or comparing the real engine. Bullish and Bearish paths include specific asymmetries; read them from source, not blind inversion. `Order_A` uses physical `(FirstIndex, BreakIndex)` identity and an immutable first stopped-A owner. The mixed E/lifecycle/bridge source is present; B/C-dependent regions are known-invalid. Audit output in exact source is not an active knowledge concept. The package cannot certify B/C-dependent E/StopAll outcomes or end-to-end numerical parity.
 
 ### 6.1 Stage semantics visible in the retained subset
 
-The following is a **bounded orientation to retained code**, not a complete normative trading specification. All four broad algorithm notes remain `pending/non-canonical` because the comprehensive algorithm reference and later-stage dependency chain are absent. The code anchors in the notes and manifest, not this prose, are the evidence for any implementation decision.
+The following is a **bounded orientation to retained code**, not a complete normative trading specification. Broad E/lifecycle/StopAll notes remain `pending/non-canonical` until route-specific review and new B/C contracts. The code anchors in the notes and manifest, not this prose, are the evidence for an implementation decision.
 
 | Stage | Observable inputs and decisions | Produced evidence and present limit |
 | --- | --- | --- |
@@ -181,13 +184,13 @@ The following is a **bounded orientation to retained code**, not a complete norm
 | Blue Line | Reaction geometry and Reset events, Decimal prices, 0.618 level, strict directional extrema, Scale/Reset strikes, formation spacing, and first strict stop. | Scale or Reset Blue with source extreme, line price, validity, and stop evidence. The drawing line and semantic stop level are different fields. |
 | A | Ordered calculation-valid Blue pairs, exact formation/stop chronology, validating Reaction, inherited stops and special Reset-Blue cases. | A candidate/behavior with trigger, source, stop and pair-cycle ownership. Strict temporal boundaries and the full main candle at some inherited-stop endpoints matter. |
 | S and `Order_A` | An eligible A's first strict stop, opposite Reaction candidates, order-free Type-3/4 routes, Order-backed Simple/Advanced candidates, exact lower-event race and fallback. | S Red/Blue decision and provenance. The first canonical opposite Reaction after an eligible stopped A can become the immutable `Order_A` parent-stop owner, ranked by confirmation time and physical First/Break indices. This is the retained physical order route. |
-| E, reconciliation, lifecycle, StopAll, serialization | Notes outline dependencies, family/owner vocabulary, candidate gate concepts and tests. Their named implementing modules and bridge serializer are missing from the Vault. | **No independently verifiable complete rule or public output contract** in this package. Treat their detailed note prose as pending context until clean source and reviewed references are republished. |
+| E, reconciliation, lifecycle, StopAll, serialization | Captured E/lifecycle/bridge modules show candidate gates, family/owner selection, hard boundaries, visibility and JSON serialization. | Source behavior is inspectable, but paths using current Order_B/C are known-invalid. No B/C-dependent output is an approved regression baseline. |
 
 The 15 Behavior entities express A, S, E and StopAll families and variants. S Red/Blue and Blue Type-1..4 are behavior classifications tied to S decision paths; they do not designate separate physical Order routes. E Red/Blue and StopAll Type-1..3 are modeled for dependency and future validation, while their full calculation ownership remains pending. The 10 Mirror notes flag direction-specific checks; they cannot be promoted merely by algebraic inversion. The 31 Test notes define checks such as source identity, precision, lifecycle, mirror and zero-difference comparison, but do not record that every such check has been run on a complete engine.
 
 ### 6.2 Source and metadata dependency example
 
-Consider a question about whether a later Reaction Mode-B candidate may replace the first stopped-A `Order_A` owner. The reader first resolves `algorithm.order.a` (currently `active/empirical`), follows its `implemented_by` edge to `source.s_zone_detector`, and reads the pinned `s_zone_detector.py` lines around the source anchor. It can then inspect `case.fixture_1_1` for the bounded `(FirstIndex, BreakIndex) = (689, 693)` ownership assertion, plus its dataset SHA. The answer may state the retained first-owner behavior, with those citations and the present review state. It must not infer a complete E lifecycle, an `Order_B` implementation, or a fresh full-output regression result from that case.
+Consider whether a later Reaction Mode-B candidate may replace the first stopped-A `Order_A` owner. Resolve `algorithm.order.a` (`canonical/normative`), follow its `implemented_by` edge to `source.s_zone_detector`, and read pinned lines 274–309. `case.fixture_1_1` provides a bounded `(FirstIndex, BreakIndex) = (689, 693)` assertion and dataset SHA. Both registered HPZR6 references have the accepted first-owner correction at line 29, optionally hash-verified through the external reference tool. This does not validate a B/C route or a fresh full-output regression result.
 
 ## 7. RAW identity, windows, and provenance
 
@@ -217,7 +220,7 @@ Three registered windows represent exact former smaller inputs inside retained p
 
 Window reconstruction is deterministic: load the parent array; use `bisect_left` on candle times for `first_epoch` and `bisect_right` for `last_epoch`; select that half-open Python slice, which corresponds to inclusive timestamp bounds; serialize with `json.dumps(selected, separators=(",", ":")).encode("utf-8")`; compare count, first/last times, and SHA-256 with the window note. The resulting digest matches the former small RAW. A fixture associated with a window must calculate from the **selected slice**. Calculating from the entire parent changes the input history and physical indexes.
 
-At this snapshot, the three former smaller RAW JSON files and their three `.meta.json` sidecars remain physically under `08_DATA/Raw` even though they are not registered as active inputs. The registered inventory is seven files; the physical directory contains ten RAW JSON files and eight sidecars (five pinned, three extra). Consequently `verified_pins_ok` can be true while `inventory_complete` and overall `ok` are false. No consumer should choose an unregistered file merely because it exists on disk. The user explicitly chose to keep non-identical overlapping RAWs, including the 309,906-row file. Deleting physical superseded files is a separate, unresolved cleanup action.
+The three former smaller RAW JSON files and their `.meta.json` sidecars were removed after each physical file's full SHA-256 matched its registered window and the parent RAW reproduced that exact window. Seven registered physical RAW files and five pinned sidecars remain inside the Vault; `inventory_complete` now passes. The 309,906-row XAUUSD file remains because the larger overlapping file has an extra candle in that interval and is not an exact replacement. No consumer should choose an unregistered file merely because it exists on disk.
 
 ## 8. Fixture model and validation scope
 
@@ -227,7 +230,7 @@ A fixture can state a specific expected relationship such as “the first eligib
 
 ## 9. Plugin package and runtime files
 
-The plugin is a local directory package, presently version `0.1.3`. Its files have separate responsibilities:
+The plugin is a local directory package, presently version `0.2.0`. Its files have separate responsibilities:
 
 | Plugin path | Responsibility |
 | --- | --- |
@@ -235,15 +238,14 @@ The plugin is a local directory package, presently version `0.1.3`. Its files ha
 | `.agents/plugins/marketplace.json` | Local marketplace identity `tradingbot-local`, package source `./`, availability/on-use policy. |
 | `mcp.json` | `tradingbot_knowledge` stdio server declaration; launches `python -B scripts/launch_mcp.py` from plugin root. |
 | `skills/tradingbot-knowledge/SKILL.md` | Agent-facing retrieval procedure and authority/evidence constraints for Codex. |
-| `vault_reader.py` | Vault locator, guarded file access, indexed note reader, search, relations, dataset/window metadata, pinned source excerpts, runtime verification. |
-| `mcp_server.py` | Seven thin MCP tool wrappers over `vault_reader`; no trading calculations. |
+| `vault_reader.py` | Vault locator, guarded file access, indexed note reader, quarantine-aware search/relations, dataset/window metadata, pinned source and optional reference excerpts, runtime verification. |
+| `mcp_server.py` | Eight thin MCP tool wrappers over `vault_reader`; no trading calculations. |
 | `vault_cli.py` | Standard-library JSON CLI for hosts without MCP. |
 | `scripts/launch_mcp.py` | Select Python with MCP SDK and execute server over stdio. |
 | `scripts/configure_vault.py` | Atomically save a per-user Vault path after minimal Vault shape checks. |
 | `maintenance/sync_sources.py` | Manifest-limited post-commit source snapshot sync, review-state writing, and index rebuild/rollback. |
 | `maintenance/install_hook.py` | Install a project Git `post-commit` hook if none exists; never overwrite an existing hook. |
 | `maintenance/dedupe_raw.py` | One-time RAW migration/helper, not used in consumer runtime. |
-| `maintenance/exclude_order_bc.py` | One-time excluded-route migration/helper, not used in consumer runtime. |
 | `requirements.txt` | Runtime MCP SDK pin `mcp==2.2.0`. |
 | `maintenance/requirements.txt` | Maintainer index-builder dependency (`jsonschema>=4.18,<5`). |
 | `test_vault_reader.py`, `maintenance/test_*.py` | Plugin-reader and maintainer behavior tests. |
@@ -255,19 +257,20 @@ The reader rejects non-normalized relative paths, backslashes, colons, empty/dot
 
 ## 10. MCP and CLI contract
 
-Seven read-only MCP tools are exported. Arguments and practical response shape are:
+Eight read-only MCP tools are exported. Arguments and practical response shape are:
 
 | Tool | Parameters | Returns / important behavior |
 | --- | --- | --- |
-| `search_knowledge` | `query: str`, `limit: int = 8` | Ranked ID/title/body matches with path, status, authority, sync review state, excerpt. Limit clamped to 1..25. |
+| `search_knowledge` | `query: str`, `limit: int = 8`, `include_quarantined: bool = false` | Ranked matches; B/C excluded by default, explicit inclusion carries a warning. Limit clamped to 1..25. |
 | `get_knowledge` | `entity_id: str` | One full indexed note plus metadata and sync review state; rejects unknown/stale IDs. |
-| `trace_relations` | `entity_id: str` | Incoming/outgoing `{from,type,to}` relations. |
+| `trace_relations` | `entity_id: str`, `include_quarantined: bool = false` | Authority-labelled incoming/outgoing relations; B/C edges excluded by default. |
 | `get_dataset` | `entity_id: str` | Dataset note frontmatter, RAW presence and byte size; **does not hash the RAW at retrieval time**. |
 | `get_raw_window` | `entity_id: str` | Window metadata, parent RAW path and inclusive range; use verifier for actual window digest. |
 | `read_source_evidence` | `path: str`, `start_line: int = 1`, `line_count: int = 40` | Numbered, hash-verified excerpt of at most 120 lines. |
-| `verify_vault` | none | Integrity and inventory status, counts, sync state, failures and extra RAW paths. |
+| `read_algorithm_reference_evidence` | `reference_id: str`, `start_line: int = 1`, `line_count: int = 40` | Optional HPZR6 excerpt only after exact size/SHA-256 verification from `TRADINGBOT_ENGINE_ROOT`; B/C sections remain diagnostic. |
+| `verify_vault` | `mode` (`knowledge` or default `full-data`) | Knowledge integrity; in full-data mode, physical RAW integrity and inventory status. |
 
-The CLI has corresponding subcommands: `search QUERY [--limit N]`, `entity ID`, `relations ID`, `dataset ID`, `window ID`, `evidence PATH [--start N --count N]`, and `verify`. Each prints JSON. Errors print JSON to stderr and exit nonzero; `verify` exits 1 when `ok` is false. Neither interface returns complete large RAW arrays. `search` uses case-folded lexical word matches; it scores ID/title/body, sorts by score then ID, and has no semantic embedding layer. A low or zero search score is not proof that a rule does not exist.
+The CLI has corresponding subcommands: `search QUERY [--limit N --include-quarantined]`, `entity ID`, `relations ID [--include-quarantined]`, `dataset ID`, `window ID`, `evidence PATH [--start N --count N]`, `reference-evidence ID [--start N --count N]`, and `verify`. Each prints JSON. Errors print JSON to stderr and exit nonzero; `verify` exits 1 when `ok` is false. Neither interface returns complete large RAW arrays. `search` uses case-folded lexical word matches; it scores ID/title/body, sorts by score then ID, and has no semantic embedding layer. A low or zero search score is not proof that a rule does not exist.
 
 Example consumer setup and query (replace placeholders with local absolute paths):
 
@@ -284,19 +287,19 @@ For Codex, install this local package as `tradingbot-intelligence@tradingbot-loc
 
 ## 11. Verification semantics and current observed state
 
-`verify_vault` checks indexed note identity and coverage, relation endpoints, source manifest sizes/hashes, absence of unpinned evidence files, registered RAW bytes/hashes, and each reconstructed window. It detects unregistered RAW JSON and `.meta.json` sidecars separately. Its response contains `failures`, `verified_evidence`, `verified_datasets`, `verified_windows`, `verified_pins_ok`, `inventory_complete`, `ok`, the unregistered-path lists, and `sync_status`. `get_dataset` is intentionally cheaper and only checks presence/size; call `verify_vault` before claiming integrity. A malformed window is recorded as a failure rather than crashing the whole verifier.
+`verify_vault(mode="knowledge")` checks indexed note identity and coverage, relation endpoints, pinned non-RAW source hashes, full nine-module coverage, quarantine metadata, absence of an active audit entity, and the two-reference registry. It does not read RAW bytes and reports `data_status=NOT_RUN`, `inventory_complete=null`, and zero verified physical datasets/windows. `verify_vault(mode="full-data")` is the default; it additionally checks registered RAW bytes/hashes, each reconstructed window, and unregistered RAW JSON and `.meta.json` sidecars. Its response contains `failures`, `verified_evidence`, `verified_datasets`, `verified_windows`, `verified_pins_ok`, `inventory_complete`, `ok`, optional `external_references` availability, unregistered-path lists, and `sync_status`. `get_dataset` is intentionally cheaper and only checks presence/size; call full-data verification before claiming integrity. A malformed window is recorded as a failure rather than crashing the verifier.
 
-The last observed verification state was **18 pinned evidence files**, **7 registered datasets**, and **3 exact windows** with `verified_pins_ok: true`, but `inventory_complete: false` and therefore `ok: false`, because three unregistered smaller RAW files and three sidecars remain physically in the Vault. The last `_INDEX/sync-status.json` records project commit `822c5ce1c1e7f464d2e08085fd6d991ee1d5d8ed`, `review_state: needs_review`, and two dirty paths: `a_zone_detector.py` and `vite.config.js` under `06_SOURCE/Code`. The Vault copies matched the observed project bytes at this review, but the dirty markers mean the capture is not simply a clean commit snapshot. A fresh reader must inspect its own status; this paragraph is a dated observation, not a permanent guarantee.
+The observed verification state is **22 pinned evidence files**, **7 registered datasets**, and **3 exact windows**, with `verified_pins_ok: true`, `inventory_complete: true`, and `ok: true`. `_INDEX/sync-status.json` records project commit `822c5ce1c1e7f464d2e08085fd6d991ee1d5d8ed` and `review_state: needs_review` because several production files and both HPZR6 references are dirty or untracked in that checkout. The Vault copies matched observed project bytes during this review; the capture is not a clean-commit-only snapshot. A fresh reader must inspect its own status; this is a dated observation.
 
-The Vault index builder's last check passed with 167 entities and 1,091 relations. The plugin reader tests (13) and maintenance tests (6) passed, the project's chart tests (156) passed, and the installed Codex cache's seven-tool MCP handshake passed in the preceding verification run. Those checks establish packaging, retrieval, data identity, and selected application tests. They do **not** establish complete E/StopAll/OrderAudit trading correctness, numerical equivalence of all stage outputs, or GitHub publication. The Vault and plugin directories have independent distribution lifecycles; an uncommitted local Vault file is not automatically present in a remote clone.
+The Vault builder generated 169 entities and 1,102 relations. The plugin reader tests (16) and maintenance tests (7) passed in this review. The project chart suite passed 156/156 tests and the MCP server registered all eight expected tools. The Vite production build was attempted but failed on this VMware share because rolldown resolved the UNC-backed index entry as `Folders/My-Projects/TradingBot/apps/chart/index.html`; that build result is incomplete environmental evidence, not a passed check. These checks establish packaging, retrieval and data identity; they do **not** establish B/C trading correctness, numerical equivalence of all stage outputs, or GitHub publication. The Vault and plugin directories have independent distribution lifecycles; an uncommitted local file is not automatically present in a remote clone.
 
 ## 12. Post-commit synchronization and update procedure
 
 `maintenance/install_hook.py --project <PROJECT_ROOT> --vault <VAULT_ROOT>` installs a Git `post-commit` hook only when the hook path does not already exist. The hook invokes `maintenance/sync_sources.py` with absolute roots. This is a **local** post-commit action; it does not stage, commit, or push the Vault. It does not discover new source files or import a full project tree. A maintainer must deliberately add new allowed files to the manifest and knowledge model.
 
-For each manifest-listed code path, sync derives the original project path by removing `06_SOURCE/Code/`. It checks Git porcelain for dirty work; dirty paths are skipped and reported. It checks that `HEAD:path` exists, reads the clean working-tree bytes, blocks excluded `Order_B`/`Order_C` route patterns, and AST-parses Python files. When bytes differ from the pinned SHA, sync updates only that source snapshot, manifest hash/size, and linked source-note hashes. It writes sync review status, rebuilds the deterministic indexes, and rolls back touched source/index files on index-build failure or write exception. A `--check` run reports prospective status without writing. If a previous review was pending and no bytes change, the review flag is preserved; a clean technical sync is not a semantic approval.
+For each manifest-listed code path, sync derives the original project path by removing `06_SOURCE/Code/`. It checks Git porcelain for dirty work; dirty paths are skipped and reported. It checks that `HEAD:path` exists, reads the clean working-tree bytes and AST-parses Python files. Mixed B/C source is copied byte-exact; quarantine belongs to knowledge metadata and retrieval policy, not source-file censorship. For each registered reference it checks the repository-relative path, working-tree cleanliness and commit presence before updating the registry's hash/size. When source bytes differ from the pinned SHA, sync updates that source snapshot, manifest hash/size and linked source-note hashes. It writes sync review status, rebuilds deterministic indexes, and rolls back touched source/reference/index files on failure. A `--check` run reports prospective status without writing. A clean technical sync is not semantic approval.
 
-Maintenance requires `jsonschema` for the Vault builder. Source and algorithm review still need a human/domain decision, especially if the original project source is changed or mixed modules are split after the `Order_B`/`Order_C` rewrite. A maintainer should run the index builder with `--check`, run plugin `verify`, inspect the precise source diff and authority impact, run relevant project tests, then commit and publish the Vault separately. Until missing comprehensive references and stage modules are safely scoped and retained, source sync cannot promote pending rules to normative automatically.
+Maintenance requires `jsonschema` for the Vault builder. Source and algorithm review still need a domain decision, especially after the Order_B/C rewrite. A maintainer should run the index builder with `--check`, run plugin `verify`, inspect the precise source diff and authority impact, run relevant project tests, then commit and publish the Vault separately. Automatic source synchronization cannot promote pending rules to normative automatically. The optional external reference registry does not make the production checkout a consumer dependency.
 
 ## 13. Reimplementation and extension invariants
 
@@ -305,17 +308,17 @@ An engineer rebuilding this system from this document should preserve these cont
 1. Keep three roots independent. A Vault clone alone contains all consumer knowledge/data paths; the reader must resolve them inside the clone. The original checkout is only a maintainer input.
 2. Keep stable entity IDs separate from file paths. Markdown frontmatter is canonical knowledge metadata; indexes are deterministic caches. Reject stale IDs/labels, invalid relations, escaped paths and unpinned code.
 3. Keep status and authority distinct. “Pending,” “empirical,” “executable,” and “normative” must produce different answer language. No current output or RAW hash is an accepted trading rule by itself.
-4. Keep `Order_A` as the only retained physical order route. Do not infer `Order_B`/`Order_C` from Reaction Mode B, S Blue type labels, or old fixtures.
+4. Keep `Order_A` accepted. Preserve current `Order_B`/`Order_C` as explicitly quarantined diagnostic evidence until the project rewrite and approval. Do not infer their validity from Reaction Mode B, S Blue type labels, matching references, or old fixtures.
 5. Preserve exact source-byte and RAW-byte identities. Include SHA-256 and size in manifests; validate source excerpts before returning them; use the exact window serialization/digest and input slice for fixture calculations.
-6. Preserve numerical/temporal semantics if rebuilding the original calculation engine: Decimal arithmetic, strict crossings, explicit inclusive windows, physical source index/time, parent and Order provenance, nullable fields, and direction-specific behavior. This document describes architecture, not a substitute for omitted algorithm source.
-7. Separate integrity from correctness. `verify` can prove registered bytes and indexes while overall inventory remains incomplete; passing tests cannot certify omitted E/lifecycle/bridge logic or absent output baselines.
-8. Keep maintenance conservative. Sync only manifest-listed clean tracked files, reject excluded routes, record review state, and publish the Vault with a separate intentional Git action.
+6. Preserve numerical/temporal semantics if rebuilding the original calculation engine: Decimal arithmetic, strict crossings, explicit inclusive windows, physical source index/time, parent and Order provenance, nullable fields, and direction-specific behavior. This document explains architecture; exact captured source remains the executable evidence.
+7. Separate integrity from correctness. `verify` can prove registered bytes and indexes but cannot certify B/C logic or absent full-output baselines.
+8. Keep maintenance conservative. Sync only manifest-listed clean tracked files and registered clean tracked references, record review state, and publish the Vault with a separate intentional Git action.
 
 ## 14. Known gaps and decisions still open
 
-The current Vault intentionally has **zero** comprehensive directional algorithm references; therefore most core/market/behavior/algorithm/mirror entries remain `pending/non-canonical`. The full `e_zone_detector.py`, `lifecycle_engine.py`, and `engine/bridge/trading_pipeline.py` were not retained because their current project versions mix excluded Order routes. A complete exact algorithm reference, output schema, and end-to-end parity claim cannot be recreated from this Vault alone. The project-side source and future rewrite must settle those rules, then the Vault can capture reviewed source and references.
+The current Vault intentionally does not copy the full comprehensive directional references: it registers both HPZR6 files by hash as optional external evidence. All nine main Engine modules are retained. Many broad algorithm/mirror notes remain `pending/non-canonical` because current B/C semantics are known invalid and no approved full-output baseline exists. The future project-side rewrite must settle those routes, after which source, references, fixtures and Vault authority can be updated together.
 
-Three superseded smaller RAWs and sidecars are still physically present, causing inventory verification to fail; their logical inputs are registered as hash-exact parent windows. The larger XAUUSD 5s file does not replace the separate 309,906-row file exactly, so both are registered. The FARAZ 1s file's filename/end-row conflict remains draft. The last sync state requires review of two dirty project paths. No approved full calculation baseline, automated GitHub publication, or universal cross-host plugin installer has been established. Each limit is explicit so a downstream AI cannot mistake a portable reader for a complete independent trading engine.
+The three redundant smaller RAWs and sidecars were removed after exact parent-window verification. The larger XAUUSD 5s file does not replace the separate 309,906-row file exactly, so both remain registered. The FARAZ 1s file's filename/end-row conflict remains draft. The sync state requires review of dirty/untracked project paths. No approved full calculation baseline, automated GitHub publication, or universal cross-host plugin installer has been established. Each limit is explicit so a downstream AI cannot mistake a portable reader for a complete independent trading engine.
 
 ## Appendix A — Complete indexed entity catalog
 
@@ -329,8 +332,9 @@ The following table is generated from this snapshot's `_INDEX/entities.json`. `P
 | `algorithm.internal_reaction` | Internal Reaction | `04_ALGORITHMS/Reaction/Internal-Reaction.md` | pending | non-canonical |
 | `algorithm.lifecycle` | Lifecycle eligibility and stage ownership | `04_ALGORITHMS/Lifecycle.md` | pending | non-canonical |
 | `algorithm.order` | Physical Order and provenance | `04_ALGORITHMS/Order/Order.md` | pending | non-canonical |
-| `algorithm.order.a` | Order_A parent-stop cause | `04_ALGORITHMS/Order/Order-A.md` | active | empirical |
-| `algorithm.orderaudit` | OrderAudit (pending fix) | `04_ALGORITHMS/OrderAudit.md` | pending-fix | non-canonical |
+| `algorithm.order.a` | Order_A parent-stop cause | `04_ALGORITHMS/Order/Order-A.md` | canonical | normative |
+| `algorithm.order.b` | Order_B current implementation, quarantined | `04_ALGORITHMS/Order/Order-B.md` | pending-fix | non-canonical |
+| `algorithm.order.c` | Order_C current implementation, quarantined | `04_ALGORITHMS/Order/Order-C.md` | pending-fix | non-canonical |
 | `algorithm.raw` | RAW normalization and candle construction | `04_ALGORITHMS/RAW.md` | pending | non-canonical |
 | `algorithm.reaction` | Reaction | `04_ALGORITHMS/Reaction/Reaction.md` | pending | non-canonical |
 | `algorithm.reconciliation` | E and lifecycle reconciliation | `04_ALGORITHMS/Reconciliation.md` | pending | non-canonical |
@@ -443,14 +447,15 @@ The following table is generated from this snapshot's `_INDEX/entities.json`. `P
 | `source.core_utils` | core utils | `06_SOURCE/Modules/core_utils.md` | active | executable |
 | `source.dependencies` | Source dependency map | `06_SOURCE/Dependency-Map.md` | pending | non-canonical |
 | `source.direction_policy` | direction policy | `06_SOURCE/Modules/direction_policy.md` | active | executable |
-| `source.e_zone_detector` | Source evidence pending rewrite | `06_SOURCE/Pending/e_zone_detector.md` | pending | non-canonical |
+| `source.e_zone_detector` | E zone detector: mixed source evidence | `06_SOURCE/Modules/e_zone_detector.md` | active | executable |
 | `source.integration_boundary` | Chart-to-bridge input scope | `06_SOURCE/Integration-Boundary.md` | pending | non-canonical |
-| `source.lifecycle_engine` | Source evidence pending rewrite | `06_SOURCE/Pending/lifecycle_engine.md` | pending | non-canonical |
+| `source.lifecycle_engine` | Lifecycle and StopAll: mixed source evidence | `06_SOURCE/Modules/lifecycle_engine.md` | active | executable |
 | `source.map` | Source map | `06_SOURCE/Source-Map.md` | pending | non-canonical |
 | `source.reaction_engine` | reaction engine | `06_SOURCE/Modules/reaction_engine.md` | active | executable |
+| `source.reference_registry` | Directional reference registry | `06_SOURCE/Reference-Registry.md` | active | empirical |
 | `source.s_zone_detector` | s zone detector | `06_SOURCE/Modules/s_zone_detector.md` | active | executable |
 | `source.state_map` | State and ownership map | `06_SOURCE/State-Map.md` | pending | non-canonical |
-| `source.trading_pipeline` | Source evidence pending rewrite | `06_SOURCE/Pending/trading_pipeline.md` | pending | non-canonical |
+| `source.trading_pipeline` | Bridge orchestration and serialization: mixed source evidence | `06_SOURCE/Modules/trading_pipeline.md` | active | executable |
 | `system.authority` | Authority and status model | `00_SYSTEM/AUTHORITY_MODEL.md` | canonical | normative |
 | `system.editing` | AI editing policy | `00_SYSTEM/EDITING_POLICY.md` | canonical | normative |
 | `system.frontmatter` | Frontmatter schema | `00_SYSTEM/FRONTMATTER_SCHEMA.md` | canonical | normative |

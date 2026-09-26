@@ -10,11 +10,55 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from sync_sources import sync
-from install_hook import install
+if __package__:
+    from . import sync_sources as sync_module
+    from .sync_sources import sync
+    from .install_hook import install
+else:
+    import sync_sources as sync_module
+    from sync_sources import sync
+    from install_hook import install
 
 
 class SyncSourcesTests(unittest.TestCase):
+    def test_clean_committed_reference_updates_registry_and_pin(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            project = base / "project"
+            vault = base / "vault"
+            reference = project / "engine/algorithms/ref.md"
+            reference.parent.mkdir(parents=True)
+            reference.write_bytes(b"new reference\n")
+            subprocess.run(["git", "init", "-q", str(project)], check=True)
+            for key, value in (("user.name", "Sync Test"), ("user.email", "sync@example.invalid")):
+                subprocess.run(["git", "-C", str(project), "config", key, value], check=True)
+            subprocess.run(["git", "-C", str(project), "add", "engine/algorithms/ref.md"], check=True)
+            subprocess.run(["git", "-C", str(project), "commit", "-qm", "reference"], check=True)
+            registry_path = vault / "06_SOURCE/References/registry.json"
+            registry_path.parent.mkdir(parents=True)
+            relative = "engine/algorithms/ref.md"
+            registry = {"references": [{"id": "test_ref", "repository_relative_path": relative,
+                                        "sha256": hashlib.sha256(b"old reference\n").hexdigest(),
+                                        "bytes": len(b"old reference\n")} ]}
+            registry_path.write_text(json.dumps(registry), encoding="utf-8")
+            index = vault / "_INDEX"
+            index.mkdir()
+            manifest = {"files": [], "algorithm_references": [], "supporting_files": [{
+                "path": "06_SOURCE/References/registry.json",
+                "sha256": hashlib.sha256(registry_path.read_bytes()).hexdigest(),
+                "bytes": registry_path.stat().st_size}]}
+            (index / "source-hashes.json").write_text(json.dumps(manifest), encoding="utf-8")
+            builder = vault / "_SCHEMA/build_indexes.py"
+            builder.parent.mkdir()
+            builder.write_text("print('OK')\n", encoding="utf-8")
+            result = sync(project, vault)
+            self.assertEqual(result["changed_reference_paths"], [relative])
+            updated = json.loads(registry_path.read_text(encoding="utf-8"))
+            self.assertEqual(updated["references"][0]["sha256"], hashlib.sha256(reference.read_bytes()).hexdigest())
+            updated_manifest = json.loads((index / "source-hashes.json").read_text(encoding="utf-8"))
+            self.assertEqual(updated_manifest["supporting_files"][0]["sha256"],
+                             hashlib.sha256(registry_path.read_bytes()).hexdigest())
+
     def test_note_write_failure_rolls_back_source_and_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary)
@@ -49,7 +93,7 @@ class SyncSourcesTests(unittest.TestCase):
             builder = vault / "_SCHEMA/build_indexes.py"
             builder.parent.mkdir()
             builder.write_text("print('OK')\n", encoding="utf-8")
-            with patch("sync_sources.write_note", side_effect=OSError("simulated note failure")):
+            with patch.object(sync_module, "write_note", side_effect=OSError("simulated note failure")):
                 with self.assertRaisesRegex(OSError, "simulated note failure"):
                     sync(project, vault)
             self.assertEqual(snapshot.read_bytes(), original)
@@ -129,7 +173,7 @@ class SyncSourcesTests(unittest.TestCase):
             self.assertEqual(status["changed_source_paths"], [])
             self.assertEqual(status["dirty_worktree_paths"], [])
 
-    def test_excluded_order_route_cannot_reenter_vault_after_commit(self) -> None:
+    def test_committed_order_b_source_is_captured_as_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary)
             project = base / "project"
@@ -159,9 +203,8 @@ class SyncSourcesTests(unittest.TestCase):
             schema.mkdir()
             (schema / "build_indexes.py").write_text("print('OK')\n", encoding="utf-8")
             result = sync(project, vault)
-            self.assertEqual(snapshot.read_bytes(), retained)
-            self.assertEqual(result["changed_source_paths"], [])
-            self.assertEqual(result["blocked_excluded_routes"], [relative])
+            self.assertEqual(snapshot.read_bytes(), source.read_bytes())
+            self.assertEqual(result["changed_source_paths"], [relative])
             self.assertEqual(result["review_state"], "needs_review")
 
     def test_post_commit_hook_captures_source(self) -> None:

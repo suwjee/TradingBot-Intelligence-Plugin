@@ -10,16 +10,9 @@ import ast
 import hashlib
 import json
 from pathlib import Path
-import re
 import subprocess
 import sys
 from datetime import datetime, timezone
-
-EXCLUDED_ORDER_PATTERN = re.compile(
-    r"\b(?:Order[_ -]?[BC]|order_[bc]|algorithm\.order\.[bc])\b|Order_A/B/C|\bB\s*/\s*C\b|blue-leg|orderResetLeg|orderBlueLeg",
-    re.IGNORECASE,
-)
-
 
 def git(project: Path, *args: str) -> bytes:
     result = subprocess.run(["git", "-C", str(project), *args],
@@ -67,7 +60,6 @@ def sync(project: Path, vault: Path, check: bool = False) -> dict:
     captured: dict[str, bytes] = {}
     changed: list[str] = []
     missing_in_commit: list[str] = []
-    blocked_excluded_routes: list[str] = []
     dirty_worktree_paths: list[str] = []
     for row in rows:
         relative = row.get("mirror", row.get("source", row.get("path")))
@@ -86,22 +78,45 @@ def sync(project: Path, vault: Path, check: bool = False) -> dict:
             missing_in_commit.append(relative)
             continue
         content = (project / repository_path).read_bytes()
-        if EXCLUDED_ORDER_PATTERN.search(content.decode("utf-8-sig")):
-            blocked_excluded_routes.append(relative)
-            continue
         if relative.endswith(".py"):
             ast.parse(content.decode("utf-8-sig"), filename=repository_path)
         captured[relative] = content
         if digest(content) != row["sha256"]:
             changed.append(relative)
+    registry_path = vault / "06_SOURCE/References/registry.json"
+    registry = json.loads(registry_path.read_text(encoding="utf-8-sig")) if registry_path.is_file() else None
+    changed_references: dict[str, bytes] = {}
+    dirty_reference_paths: list[str] = []
+    missing_reference_commits: list[str] = []
+    if registry is not None:
+        for row in registry["references"]:
+            relative = row["repository_relative_path"]
+            if (not relative.startswith("engine/algorithms/") or "\\" in relative or ":" in relative
+                    or any(part in {"", ".", ".."} for part in relative.split("/"))):
+                raise RuntimeError(f"Unsafe reference path in registry: {relative}")
+            if git(project, "status", "--porcelain", "--untracked-files=all", "--", relative).strip():
+                dirty_reference_paths.append(relative)
+                continue
+            try:
+                git(project, "show", f"HEAD:{relative}")
+            except RuntimeError:
+                missing_reference_commits.append(relative)
+                continue
+            content = (project / relative).read_bytes()
+            if digest(content) != row["sha256"]:
+                changed_references[relative] = content
     status = {
         "source_commit": head,
         "captured_utc": datetime.now(timezone.utc).isoformat(),
         "changed_source_paths": changed,
+        "changed_reference_paths": sorted(changed_references),
         "missing_in_commit": missing_in_commit,
-        "blocked_excluded_routes": blocked_excluded_routes,
         "dirty_worktree_paths": dirty_worktree_paths,
-        "review_state": "needs_review" if changed or missing_in_commit or blocked_excluded_routes or dirty_worktree_paths else "unchanged",
+        "dirty_reference_paths": dirty_reference_paths,
+        "missing_reference_commits": missing_reference_commits,
+        "review_state": "needs_review" if (changed or changed_references or missing_in_commit
+                                         or dirty_worktree_paths or dirty_reference_paths
+                                         or missing_reference_commits) else "unchanged",
         "scope": "manifest-listed clean tracked source; exact working-tree bytes; no generated trading output",
     }
     if check:
@@ -121,6 +136,24 @@ def sync(project: Path, vault: Path, check: bool = False) -> dict:
                 path.write_bytes(original)
 
     try:
+        if changed_references and registry is not None:
+            registry["source_commit"] = head
+            for row in registry["references"]:
+                content = changed_references.get(row["repository_relative_path"])
+                if content is not None:
+                    row["sha256"] = digest(content)
+                    row["bytes"] = len(content)
+            remember(registry_path)
+            registry_path.write_text(json.dumps(registry, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            registry_row = next((row for row in manifest.get("supporting_files", [])
+                                 if row["path"] == "06_SOURCE/References/registry.json"), None)
+            if registry_row is None:
+                raise RuntimeError("Reference registry is not pinned in the source manifest")
+            registry_bytes = registry_path.read_bytes()
+            registry_row["sha256"] = digest(registry_bytes)
+            registry_row["bytes"] = len(registry_bytes)
+            remember(manifest_path)
+            manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         if changed:
             for row in rows:
                 relative = row.get("mirror", row.get("source", row.get("path")))
