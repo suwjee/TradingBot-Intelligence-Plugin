@@ -34,6 +34,35 @@ def locate_vault() -> Path:
 ROOT = locate_vault()
 INDEX = ROOT / "_INDEX"
 
+ORDER_CONTRACTS: dict[str, dict[str, object]] = {
+    "algorithm.order.a": {
+        "status": "canonical",
+        "authority": "normative",
+        "implementation_validity": "accepted",
+        "valid_for_reasoning": True,
+        "valid_for_validation": True,
+        "valid_for_regression_baseline": True,
+    },
+    "algorithm.order.b": {
+        "status": "pending-fix",
+        "authority": "non-canonical",
+        "implementation_validity": "known-invalid",
+        "valid_for_reasoning": False,
+        "valid_for_validation": False,
+        "valid_for_regression_baseline": False,
+        "rewrite_required": True,
+    },
+    "algorithm.order.c": {
+        "status": "pending-fix",
+        "authority": "non-canonical",
+        "implementation_validity": "known-invalid",
+        "valid_for_reasoning": False,
+        "valid_for_validation": False,
+        "valid_for_regression_baseline": False,
+        "rewrite_required": True,
+    },
+}
+
 
 def _json(relative: str) -> dict:
     return json.loads((ROOT / relative).read_text(encoding="utf-8-sig"))
@@ -102,6 +131,9 @@ def _read_indexed_note(entity_id: str, row: dict) -> str:
     expected = {"id": entity_id, **{key: row[key] for key in ("type", "status", "authority", "title")}}
     if any(fields.get(key) != value for key, value in expected.items()):
         raise ValueError(f"Stale entity index: {entity_id}")
+    for key, expected_value in ORDER_CONTRACTS.get(entity_id, {}).items():
+        if fields.get(key) != expected_value:
+            raise ValueError(f"Order contract metadata mismatch: {entity_id}.{key}")
     return content
 
 
@@ -117,6 +149,66 @@ def _note(entity_id: str) -> tuple[dict, str]:
     if row is None:
         raise ValueError(f"Unknown entity: {entity_id}")
     return row, _read_indexed_note(entity_id, row)
+
+
+def _fixture_source_review_issues(entities: dict) -> tuple[list[str], list[str], list[str]]:
+    """Return strict errors and explicitly declared pending fixture-source drift."""
+    errors: list[str] = []
+    warnings: list[str] = []
+    known_pending: list[str] = []
+    for entity_id, row in entities.items():
+        if row.get("type") != "case":
+            continue
+        try:
+            fields, _ = _frontmatter(_read_indexed_note(entity_id, row))
+            fixture = _inside(fields["source_fixture"], "")
+            if not fixture.is_file():
+                errors.append(f"fixture_source_missing:{entity_id}")
+                continue
+            actual_sha256 = hashlib.sha256(fixture.read_bytes()).hexdigest()
+            if actual_sha256 != fields["source_fixture_sha256"]:
+                issue = f"fixture_source_sha_mismatch:{entity_id}"
+                if fields.get("source_fixture_review") == "pending-manual-review":
+                    known_pending.append(issue)
+                    warnings.append(f"KNOWN_PENDING: {issue}")
+                else:
+                    errors.append(issue)
+            fixture_lines = fixture.read_text(encoding="utf-8-sig").splitlines()
+            fixture_line = fields["source_fixture_line"]
+            if not isinstance(fixture_line, int) or fixture_line < 1 or fixture_line > len(fixture_lines):
+                errors.append(f"fixture_source_line_out_of_range:{entity_id}")
+                continue
+            section = re.fullmatch(r"case\.fixture_([0-9]+)_([0-9]+)", entity_id)
+            if section and not fixture_lines[fixture_line - 1].startswith(
+                    f"### {section.group(1)}.{section.group(2)} "):
+                errors.append(f"fixture_source_heading_mismatch:{entity_id}")
+        except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+            errors.append(f"fixture_source_invalid:{entity_id}")
+    return errors, warnings, known_pending
+
+
+def _external_reference_availability(registry: dict, failures: list[str]) -> dict[str, str]:
+    """Verify configured HPZR6 evidence without making it a runtime requirement."""
+    availability: dict[str, str] = {}
+    configured_engine = os.environ.get("TRADINGBOT_ENGINE_ROOT")
+    for item in registry["references"]:
+        if not configured_engine:
+            availability[item["id"]] = "optional_not_configured"
+            continue
+        try:
+            root = Path(configured_engine).expanduser().resolve()
+            path = (root / item["repository_relative_path"]).resolve()
+            if not path.is_relative_to((root / "engine/algorithms").resolve()):
+                raise ValueError("Reference path escapes configured algorithms root")
+            data = path.read_bytes()
+            valid = len(data) == item["bytes"] and hashlib.sha256(data).hexdigest() == item["sha256"]
+            availability[item["id"]] = "verified" if valid else "identity_mismatch"
+            if not valid:
+                failures.append(f"reference_identity:{item['id']}")
+        except (OSError, ValueError, KeyError):
+            availability[item["id"]] = "unavailable"
+            failures.append(f"reference_unavailable:{item['id']}")
+    return availability
 
 
 def search(query: str, limit: int = 8, include_quarantined: bool = False) -> list[dict]:
@@ -269,13 +361,14 @@ def verify_package(mode: str = "full-data") -> dict:
     manifest = _json("_INDEX/source-hashes.json")
     rows = manifest["files"] + manifest["algorithm_references"] + manifest.get("supporting_files", [])
     failures = []
+    warnings: list[str] = []
+    known_pending: list[str] = []
     entities = _entities()
     if "algorithm.orderaudit" in entities:
         failures.append("inactive_order_audit_entity")
-    for entity_id in ("algorithm.order.b", "algorithm.order.c"):
-        row = entities.get(entity_id, {})
-        if row.get("status") != "pending-fix" or row.get("authority") != "non-canonical" or row.get("valid_for_reasoning") is not False:
-            failures.append(f"quarantine_metadata:{entity_id}")
+    for entity_id in ORDER_CONTRACTS:
+        if entity_id not in entities:
+            failures.append(f"order_contract_missing:{entity_id}")
     try:
         registry = _reference_registry()
         if {row["id"] for row in registry["references"]} != {"bullish_hpzr6", "bearish_hpzr6"}:
@@ -295,9 +388,13 @@ def verify_package(mode: str = "full-data") -> dict:
             _read_indexed_note(entity_id, row)
         except (OSError, ValueError, KeyError, json.JSONDecodeError):
             failures.append(row["file"])
+    fixture_errors, fixture_warnings, fixture_known_pending = _fixture_source_review_issues(entities)
+    failures.extend(fixture_errors)
+    warnings.extend(fixture_warnings)
+    known_pending.extend(fixture_known_pending)
     for path in ROOT.rglob("*.md"):
         relative = path.relative_to(ROOT).as_posix()
-        if (any(part in {".git", ".obsidian", "Code"} for part in path.relative_to(ROOT).parts)
+        if (any(part in {".git", ".obsidian", "_GENERATED", "Code"} for part in path.relative_to(ROOT).parts)
                 or relative.startswith("07_VALIDATION/Fixtures/Sources/") or path.stat().st_size == 0):
             continue
         if relative not in indexed_paths:
@@ -341,13 +438,15 @@ def verify_package(mode: str = "full-data") -> dict:
                if re.fullmatch(r"data\.window_[0-9a-f]{8}", entity_id)]
     sync_path = ROOT / "_INDEX/sync-status.json"
     sync_status = json.loads(sync_path.read_text(encoding="utf-8-sig")) if sync_path.is_file() else None
+    reference_availability = _external_reference_availability(registry, failures)
     if mode == "knowledge":
         return {"ok": not failures, "mode": mode, "data_status": "NOT_RUN",
-                "verified_pins_ok": not failures, "inventory_complete": None,
+                "verified_pins_ok": not failures and not known_pending, "inventory_complete": None,
                 "registered_datasets": len(datasets), "registered_windows": len(windows),
                 "verified_evidence": len([row for row in rows if not row.get("mirror", row.get("source", row.get("path"))).startswith("08_DATA/Raw/")]),
                 "verified_datasets": 0, "verified_windows": 0, "sync_status": sync_status,
-                "failures": failures}
+                "external_references": reference_availability, "errors": failures,
+                "warnings": warnings, "known_pending": known_pending, "failures": failures}
     registered_raw_files = set()
     for entity_id in datasets:
         try:
@@ -395,33 +494,18 @@ def verify_package(mode: str = "full-data") -> dict:
                          if path.is_file()} if raw_root.is_dir() else set()
     unregistered_raw_files = sorted(physical_raw_files - registered_raw_files)
     unregistered_raw_sidecars = sorted(physical_sidecars - pinned_sidecars)
+    failures.extend(f"unregistered_raw_file:{path}" for path in unregistered_raw_files)
+    failures.extend(f"unregistered_raw_sidecar:{path}" for path in unregistered_raw_sidecars)
     inventory_complete = not unregistered_raw_files and not unregistered_raw_sidecars
-    reference_availability = {}
-    configured_engine = os.environ.get("TRADINGBOT_ENGINE_ROOT")
-    for item in registry["references"]:
-        if not configured_engine:
-            reference_availability[item["id"]] = "optional_not_configured"
-            continue
-        try:
-            root = Path(configured_engine).expanduser().resolve()
-            path = (root / item["repository_relative_path"]).resolve()
-            if not path.is_relative_to((root / "engine/algorithms").resolve()):
-                raise ValueError("Reference path escapes configured algorithms root")
-            data = path.read_bytes()
-            valid = len(data) == item["bytes"] and hashlib.sha256(data).hexdigest() == item["sha256"]
-            reference_availability[item["id"]] = "verified" if valid else "identity_mismatch"
-            if not valid:
-                failures.append(f"reference_identity:{item['id']}")
-        except (OSError, ValueError, KeyError):
-            reference_availability[item["id"]] = "unavailable"
-            failures.append(f"reference_unavailable:{item['id']}")
-    return {"ok": not failures and inventory_complete, "mode": mode,
-            "data_status": "PASS" if not failures and inventory_complete else "FAIL",
-            "verified_pins_ok": not failures,
+    ok = not failures
+    data_status = "FAIL" if not ok else "PASS_WITH_WARNINGS" if warnings else "PASS"
+    return {"ok": ok, "mode": mode, "data_status": data_status,
+            "verified_pins_ok": not failures and not known_pending,
             "inventory_complete": inventory_complete,
             "unregistered_raw_files": unregistered_raw_files,
             "unregistered_raw_sidecars": unregistered_raw_sidecars,
             "verified_evidence": len(rows), "verified_datasets": len(datasets),
             "verified_windows": len(windows), "sync_status": sync_status,
-            "external_references": reference_availability,
+            "external_references": reference_availability, "errors": failures,
+            "warnings": warnings, "known_pending": known_pending,
             "failures": failures}
