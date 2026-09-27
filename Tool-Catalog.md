@@ -1,12 +1,18 @@
 # Tool catalog
 
-- `search_knowledge`: find notes by title, ID, and content; known-invalid B/C require `include_quarantined=true`.
-- `get_knowledge`: read one complete note and its authority.
-- `trace_relations`: read authority-labelled incoming and outgoing entity relations; known-invalid B/C require `include_quarantined=true`.
-- `get_dataset`: read metadata for a retained physical RAW; window entities use `get_raw_window`.
-- `get_raw_window`: read a registered window's retained parent path, inclusive epochs, and recorded SHA-256; use `verify_vault` to recheck its bytes.
-- `read_source_evidence`: read bounded, hash-verified source lines captured in the Vault.
-- `read_algorithm_reference_evidence`: optionally read bounded, hash-verified HPZR6 lines from `TRADINGBOT_ENGINE_ROOT`; registry sections remain diagnostic unless accepted independently.
-- `verify_vault`: `mode="knowledge"` checks indexed notes, relations, and pinned non-RAW evidence without reading RAW bytes; `data_status=NOT_RUN` and `inventory_complete=null` are explicit. `mode="full-data"` (default) also checks physical RAW bytes, exact windows, and unregistered inventory. Inspect `verified_pins_ok`, `inventory_complete`, and overall `ok` separately.
+The MCP server exposes eight read-only tools. Each uses the current configured Vault:
 
-The CLI equivalents are `search`, `entity`, `relations`, `dataset`, `window`, `evidence`, `reference-evidence`, and `verify --mode knowledge|full-data`.
+| MCP tool | CLI command | Result |
+| --- | --- | --- |
+| `search_knowledge` | `search QUERY` | Ranked indexed notes; optional type, authority, status, diagnostic filters, and offset. Each hit reports total matches and continuation offset. |
+| `get_knowledge` | `entity ID` | Complete note and indexed authority metadata, subject to an explicit configurable byte cap. |
+| `trace_relations` | `relations ID` | Incoming/outgoing edges and bounded directional traversal. |
+| `get_dataset` | `dataset ID` | Registered RAW metadata and file availability. |
+| `get_raw_window` | `window ID` | Registered inclusive range; optional bounded rows. |
+| `read_source_evidence` | `evidence SOURCE_ID_OR_PATH` | At most 120 pinned, hash-checked source lines. |
+| `read_algorithm_reference_evidence` | `reference-evidence ID` | At most 120 registered, hash-checked external reference lines. |
+| `verify_vault` | `verify --mode knowledge|full-data` | Integrity, inventory, known pending, and optional reference availability. |
+
+`vault_cli.py doctor` adds a real stdio MCP check. Search and relations hide unresolved or invalid-for-reasoning entities by default; diagnostic flags do not change authority. Full-data verification is required for retained RAW integrity claims.
+
+Search returns at most 25 hits per page and reports `truncated` and `next_offset` on each hit. `get_knowledge` defaults to a 1 MiB note cap (`max_bytes`, at most 4 MiB); oversized notes return `RESPONSE_TOO_LARGE` rather than a partial note. Relation depth is at most five, source/reference excerpts at most 120 lines, and RAW window rows at most 1,000.

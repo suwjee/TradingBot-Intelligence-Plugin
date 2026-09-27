@@ -8,7 +8,7 @@
       "name": "tradingbot-intelligence",
       "source": {
         "source": "local",
-        "path": "./"
+        "path": "./.plugin-package/tradingbot-intelligence"
       },
       "policy": {
         "installation": "AVAILABLE",

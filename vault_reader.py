@@ -3,10 +3,54 @@ from __future__ import annotations
 
 from pathlib import Path
 import bisect
+from functools import lru_cache
 import hashlib
 import json
 import os
 import re
+
+
+class VaultError(RuntimeError):
+    """An expected configuration or integrity failure with a stable code."""
+
+    def __init__(self, code: str, message: str) -> None:
+        self.code = code
+        super().__init__(f"{code}: {message}")
+
+
+def error_payload(exc: Exception) -> dict:
+    """Translate expected reader failures to a stable machine-readable shape."""
+    if isinstance(exc, VaultError):
+        code = exc.code
+    elif isinstance(exc, KeyError):
+        code = "INVALID_VAULT"
+    elif isinstance(exc, OSError):
+        code = "DEPENDENCY_UNAVAILABLE"
+    elif isinstance(exc, ValueError):
+        message = str(exc)
+        if message.startswith("Unknown entity:"):
+            code = "ENTITY_NOT_FOUND"
+        elif "reference" in message.lower() and "identity" in message.lower():
+            code = "REFERENCE_HASH_MISMATCH"
+        elif "Evidence hash" in message:
+            code = "SOURCE_HASH_MISMATCH"
+        elif "Stale" in message:
+            code = "INDEX_STALE"
+        elif any(term in message for term in ("Path escapes", "Path must be", "Unsafe reference")):
+            code = "PATH_OUTSIDE_ALLOWED_ROOT"
+        elif "time range" in message.lower():
+            code = "INVALID_TIME_RANGE"
+        elif "exceeds response byte limit" in message:
+            code = "RESPONSE_TOO_LARGE"
+        elif "reference" in message.lower() and "unavailable" in message.lower():
+            code = "REFERENCE_NOT_FOUND"
+        else:
+            code = "INVALID_REQUEST"
+    else:
+        code = "INTERNAL_ERROR"
+    message = str(exc) if code not in {"INTERNAL_ERROR", "DEPENDENCY_UNAVAILABLE"} else (
+        "Required resource unavailable" if code == "DEPENDENCY_UNAVAILABLE" else "Internal reader error")
+    return {"ok": False, "error": {"code": code, "message": message}}
 
 
 def vault_config_path() -> Path:
@@ -21,51 +65,62 @@ def locate_vault() -> Path:
     if not configured:
         config_path = vault_config_path()
         if config_path.is_file():
-            config = json.loads(config_path.read_text(encoding="utf-8-sig"))
-            candidates.append(Path(config["vault_root"]))
+            try:
+                config = json.loads(config_path.read_text(encoding="utf-8-sig"))
+                candidates.append(Path(config["vault_root"]))
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                raise VaultError("INVALID_CONFIG", "Vault configuration is unreadable") from exc
         candidates.append(Path(__file__).resolve().parent.parent / "TradingBot-Knowledge")
     for candidate in candidates:
         root = candidate.expanduser().resolve()
-        if (root / "_INDEX/entities.json").is_file() and (root / "00_SYSTEM/AUTHORITY_MODEL.md").is_file():
-            return root
-    raise RuntimeError("Configure the cloned Vault with scripts/configure_vault.py or TRADINGBOT_KNOWLEDGE_VAULT")
+        if not root.is_dir():
+            if configured:
+                raise VaultError("VAULT_NOT_FOUND", f"Configured Vault root does not exist: {root}")
+            continue
+        required = ("_INDEX/entities.json", "_INDEX/relations.json",
+                    "_INDEX/source-hashes.json", "_SCHEMA/note.schema.json",
+                    "00_SYSTEM/AUTHORITY_MODEL.md", "06_SOURCE/References/registry.json")
+        missing = [relative for relative in required if not (root / relative).is_file()]
+        if missing:
+            if configured:
+                raise VaultError("INVALID_VAULT", f"Missing required files: {', '.join(missing)}")
+            continue
+        try:
+            entities = json.loads((root / required[0]).read_text(encoding="utf-8-sig"))
+            relations = json.loads((root / required[1]).read_text(encoding="utf-8-sig"))
+            schema = json.loads((root / required[3]).read_text(encoding="utf-8-sig"))
+            registry = json.loads((root / required[5]).read_text(encoding="utf-8-sig"))
+            if (not isinstance(entities.get("entities"), dict)
+                    or not isinstance(relations.get("relations"), list)
+                    or schema.get("$schema") != "https://json-schema.org/draft/2020-12/schema"
+                    or registry.get("schema_version") != 1):
+                raise ValueError("Unsupported schema or index structure")
+        except (OSError, ValueError, TypeError) as exc:
+            raise VaultError("INVALID_VAULT", "Vault schema or index is invalid or incompatible") from exc
+        return root
+    raise VaultError("VAULT_NOT_FOUND", "Configure a cloned Vault with scripts/configure_vault.py or TRADINGBOT_KNOWLEDGE_VAULT")
 
 
 ROOT = locate_vault()
 INDEX = ROOT / "_INDEX"
 
-ORDER_CONTRACTS: dict[str, dict[str, object]] = {
-    "algorithm.order.a": {
-        "status": "canonical",
-        "authority": "normative",
-        "implementation_validity": "accepted",
-        "valid_for_reasoning": True,
-        "valid_for_validation": True,
-        "valid_for_regression_baseline": True,
-    },
-    "algorithm.order.b": {
-        "status": "pending-fix",
-        "authority": "non-canonical",
-        "implementation_validity": "known-invalid",
-        "valid_for_reasoning": False,
-        "valid_for_validation": False,
-        "valid_for_regression_baseline": False,
-        "rewrite_required": True,
-    },
-    "algorithm.order.c": {
-        "status": "pending-fix",
-        "authority": "non-canonical",
-        "implementation_validity": "known-invalid",
-        "valid_for_reasoning": False,
-        "valid_for_validation": False,
-        "valid_for_regression_baseline": False,
-        "rewrite_required": True,
-    },
-}
+RELATION_FIELDS = ("calculated_by", "implemented_by", "depends_on", "produces",
+                   "implements", "affects", "parent_of", "child_of", "relates_to",
+                   "supports", "orchestrates", "related_entities")
+
+@lru_cache(maxsize=512)
+def _cached_text(path: str, mtime_ns: int, ctime_ns: int, size: int) -> str:
+    """Cache file text by observed identity; no query or authority state is cached."""
+    return Path(path).read_text(encoding="utf-8-sig")
+
+
+def _read_text(path: Path) -> str:
+    stamp = path.stat()
+    return _cached_text(str(path), stamp.st_mtime_ns, stamp.st_ctime_ns, stamp.st_size)
 
 
 def _json(relative: str) -> dict:
-    return json.loads((ROOT / relative).read_text(encoding="utf-8-sig"))
+    return json.loads(_read_text(ROOT / relative))
 
 
 def _inside(relative: str, prefix: str) -> Path:
@@ -97,20 +152,24 @@ def _reference_registry() -> dict:
 
 
 def _quarantined(entity_id: str, row: dict) -> bool:
-    return entity_id in {"algorithm.order.b", "algorithm.order.c"} or row.get("valid_for_reasoning") is False
+    return (row.get("valid_for_reasoning") is False
+            or row.get("authority") == "non-canonical"
+            or row.get("status") in {"draft", "pending", "pending-fix", "proposed",
+                                     "deprecated", "superseded", "archived"})
 
 
 def _warning(entity_id: str, row: dict) -> str | None:
-    if _quarantined(entity_id, row):
+    if row.get("implementation_validity") == "known-invalid":
         return "Known-invalid or unresolved knowledge: diagnostic evidence only; do not use for trading reasoning or regression baselines."
     if row.get("affected_by_known_invalid_order_route"):
-        return "Mixed source evidence: B/C-dependent regions are known-invalid; assess the cited region before use."
-    if row.get("authority") == "non-canonical":
-        return "Non-canonical knowledge: inspect status and evidence before use."
+        return "Mixed source evidence: invalid dependent regions require route-specific review."
+    if _quarantined(entity_id, row):
+        return "Non-canonical or unresolved knowledge: inspect status and evidence before use."
     return None
 
 
-def _frontmatter(content: str) -> tuple[dict, str]:
+@lru_cache(maxsize=512)
+def _parsed_frontmatter(content: str) -> tuple[dict, str]:
     if not content.startswith("---\n") or "\n---\n" not in content[4:]:
         raise ValueError("Knowledge note has no complete frontmatter")
     header, body = content[4:].split("\n---\n", 1)
@@ -125,15 +184,23 @@ def _frontmatter(content: str) -> tuple[dict, str]:
     return fields, body
 
 
+def _frontmatter(content: str) -> tuple[dict, str]:
+    fields, body = _parsed_frontmatter(content)
+    return dict(fields), body
+
+
 def _read_indexed_note(entity_id: str, row: dict) -> str:
-    content = _inside(row["file"], "").read_text(encoding="utf-8-sig")
+    content = _read_text(_inside(row["file"], ""))
     fields, _ = _frontmatter(content)
     expected = {"id": entity_id, **{key: row[key] for key in ("type", "status", "authority", "title")}}
     if any(fields.get(key) != value for key, value in expected.items()):
         raise ValueError(f"Stale entity index: {entity_id}")
-    for key, expected_value in ORDER_CONTRACTS.get(entity_id, {}).items():
-        if fields.get(key) != expected_value:
-            raise ValueError(f"Order contract metadata mismatch: {entity_id}.{key}")
+    indexed_defaults = {"valid_for_reasoning": None,
+                        "implementation_validity": "unreviewed",
+                        "affected_by_known_invalid_order_route": False}
+    for key, default in indexed_defaults.items():
+        if key in row and fields.get(key, default) != row[key]:
+            raise ValueError(f"Stale entity index: {entity_id}.{key}")
     return content
 
 
@@ -178,9 +245,7 @@ def _fixture_source_review_issues(entities: dict) -> tuple[list[str], list[str],
             if not isinstance(fixture_line, int) or fixture_line < 1 or fixture_line > len(fixture_lines):
                 errors.append(f"fixture_source_line_out_of_range:{entity_id}")
                 continue
-            section = re.fullmatch(r"case\.fixture_([0-9]+)_([0-9]+)", entity_id)
-            if section and not fixture_lines[fixture_line - 1].startswith(
-                    f"### {section.group(1)}.{section.group(2)} "):
+            if fixture_lines[fixture_line - 1] != f"### {fields['title']}":
                 errors.append(f"fixture_source_heading_mismatch:{entity_id}")
         except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
             errors.append(f"fixture_source_invalid:{entity_id}")
@@ -188,7 +253,7 @@ def _fixture_source_review_issues(entities: dict) -> tuple[list[str], list[str],
 
 
 def _external_reference_availability(registry: dict, failures: list[str]) -> dict[str, str]:
-    """Verify configured HPZR6 evidence without making it a runtime requirement."""
+    """Verify configured external reference evidence when its root is available."""
     availability: dict[str, str] = {}
     configured_engine = os.environ.get("TRADINGBOT_ENGINE_ROOT")
     for item in registry["references"]:
@@ -211,16 +276,27 @@ def _external_reference_availability(registry: dict, failures: list[str]) -> dic
     return availability
 
 
-def search(query: str, limit: int = 8, include_quarantined: bool = False) -> list[dict]:
+def search(query: str, limit: int = 8, include_quarantined: bool = False,
+           *, entity_type: str | None = None, authority: str | None = None,
+           status: str | None = None, include_noncanonical: bool = False,
+           include_pending: bool = False, offset: int = 0) -> list[dict]:
     terms = [term.casefold() for term in re.findall(r"\w+", query) if len(term) > 1]
     if not terms:
         raise ValueError("Supply a search term")
-    if re.fullmatch(r"order[_ ]?audit", query.strip(), re.IGNORECASE):
-        return []
     limit = max(1, min(int(limit), 25))
+    if not isinstance(offset, int) or isinstance(offset, bool) or offset < 0:
+        raise ValueError("Search offset must be a nonnegative integer")
     hits = []
     for entity_id, row in _entities().items():
-        if _quarantined(entity_id, row) and not include_quarantined:
+        if entity_type is not None and row.get("type") != entity_type:
+            continue
+        if authority is not None and row.get("authority") != authority:
+            continue
+        if status is not None and row.get("status") != status:
+            continue
+        explicitly_included = include_quarantined or include_noncanonical or (
+            include_pending and row.get("status") in {"pending", "pending-fix", "draft", "proposed"})
+        if _quarantined(entity_id, row) and not explicitly_included:
             continue
         note = _read_indexed_note(entity_id, row)
         body = _frontmatter(note)[1]
@@ -235,31 +311,79 @@ def search(query: str, limit: int = 8, include_quarantined: bool = False) -> lis
             hits.append((score, {"id": entity_id, **row, "sync_review_state": _sync_review_state(),
                                  "warning": _warning(entity_id, row), "excerpt": excerpt}))
     hits.sort(key=lambda item: (-item[0], item[1]["id"]))
-    return [row for _, row in hits[:limit]]
+    next_offset = offset + limit if offset + limit < len(hits) else None
+    return [row | {"total_matches": len(hits), "truncated": next_offset is not None,
+                   "next_offset": next_offset}
+            for _, row in hits[offset:offset + limit]]
 
 
-def get_entity(entity_id: str) -> dict:
+def get_entity(entity_id: str, max_bytes: int = 1_048_576) -> dict:
+    if not isinstance(max_bytes, int) or isinstance(max_bytes, bool) or not 1 <= max_bytes <= 4_194_304:
+        raise ValueError("Knowledge max_bytes must be 1-4194304")
+    indexed = _entities().get(entity_id)
+    if indexed is None:
+        raise ValueError(f"Unknown entity: {entity_id}")
+    if _inside(indexed["file"], "").stat().st_size > max_bytes:
+        raise ValueError("Knowledge note exceeds response byte limit; increase max_bytes")
     row, body = _note(entity_id)
     return {"id": entity_id, **row, "sync_review_state": _sync_review_state(),
             "warning": _warning(entity_id, row), "content": body}
 
 
-def relations(entity_id: str, include_quarantined: bool = False) -> dict:
+def relations(entity_id: str, include_quarantined: bool = False,
+              *, direction: str = "both", max_depth: int = 1) -> dict:
     entities = _entities()
     if entity_id not in entities:
         raise ValueError(f"Unknown entity: {entity_id}")
-    edges = _json("_INDEX/relations.json")["relations"]
+    if direction not in {"both", "incoming", "outgoing"}:
+        raise ValueError("Relation direction must be both, incoming, or outgoing")
+    if not isinstance(max_depth, int) or not 1 <= max_depth <= 5:
+        raise ValueError("Relation max_depth must be 1-5")
+    edges = sorted(_json("_INDEX/relations.json")["relations"],
+                   key=lambda edge: (edge["from"], edge["to"], edge["type"]))
+    if any(edge["from"] not in entities or edge["to"] not in entities for edge in edges):
+        raise ValueError("Stale relation index: unknown entity")
     if not include_quarantined:
         edges = [edge for edge in edges if not _quarantined(edge["from"], entities[edge["from"]])
                  and not _quarantined(edge["to"], entities[edge["to"]])]
-    return {"entity_id": entity_id, "warning": _warning(entity_id, entities[entity_id]),
+    result = {"entity_id": entity_id, "warning": _warning(entity_id, entities[entity_id]),
             "authority": entities[entity_id]["authority"],
+            "status": entities[entity_id]["status"],
             "outgoing": [{**e, "target_authority": entities[e["to"]]["authority"],
+                          "target_status": entities[e["to"]]["status"],
                           "target_warning": _warning(e["to"], entities[e["to"]])}
                          for e in edges if e["from"] == entity_id],
             "incoming": [{**e, "source_authority": entities[e["from"]]["authority"],
+                          "source_status": entities[e["from"]]["status"],
                           "source_warning": _warning(e["from"], entities[e["from"]])}
                          for e in edges if e["to"] == entity_id]}
+    visited = {entity_id}
+    frontier = [entity_id]
+    walked = []
+    for depth in range(1, max_depth + 1):
+        next_frontier = []
+        for current in frontier:
+            candidates = []
+            if direction in {"both", "outgoing"}:
+                candidates.extend((edge, edge["to"]) for edge in edges if edge["from"] == current)
+            if direction in {"both", "incoming"}:
+                candidates.extend((edge, edge["from"]) for edge in edges if edge["to"] == current)
+            for edge, neighbor in candidates:
+                if neighbor in visited:
+                    continue
+                visited.add(neighbor)
+                next_frontier.append(neighbor)
+                walked.append({**edge, "depth": depth, "entity_id": neighbor,
+                               "authority": entities[neighbor]["authority"],
+                               "status": entities[neighbor]["status"],
+                               "warning": _warning(neighbor, entities[neighbor])})
+        frontier = next_frontier
+        if not frontier:
+            break
+    result["traversal"] = walked
+    result["direction"] = direction
+    result["max_depth"] = max_depth
+    return result
 
 
 def read_algorithm_reference_evidence(reference_id: str, start_line: int = 1, line_count: int = 40) -> dict:
@@ -289,17 +413,18 @@ def read_algorithm_reference_evidence(reference_id: str, start_line: int = 1, li
     if start > len(lines):
         raise ValueError("Start line exceeds file length")
     end = min(len(lines), start + count - 1)
-    return {"reference_id": reference_id, "sha256": row["sha256"], "version": row["version"],
-            "authority_scope": row["authority_scope"], "known_invalid_sections": row["known_invalid_sections"],
-            "inactive_sections": row["inactive_sections"],
-            "warning": "Reference evidence is descriptive; current Order_B/C semantics are known-invalid and audit is inactive.",
+    return {"reference_id": reference_id, "sha256": row["sha256"], "version": row.get("version"),
+            "authority_scope": row.get("authority_scope", "external evidence"),
+            "known_invalid_sections": row.get("known_invalid_sections", []),
+            "inactive_sections": row.get("inactive_sections", []),
+            "warning": "External reference evidence does not establish normative authority.",
             "start_line": start, "end_line": end,
             "lines": [{"line": n, "text": lines[n - 1]} for n in range(start, end + 1)]}
 
 
 def get_dataset(entity_id: str) -> dict:
     row, body = _note(entity_id)
-    if not re.fullmatch(r"data\.dataset_[0-9a-f]{8}", entity_id) or row["type"] != "data":
+    if row["type"] != "data":
         raise ValueError("Expected a dataset entity ID")
     metadata = _frontmatter(body)[0]
     if metadata.get("data_kind") != "dataset":
@@ -310,21 +435,109 @@ def get_dataset(entity_id: str) -> dict:
             "raw_present": path.is_file(), "raw_bytes": path.stat().st_size if path.is_file() else None}
 
 
-def get_window(entity_id: str) -> dict:
+def _iter_json_array(path: Path):
+    """Yield array entries without loading the entire RAW file into memory."""
+    decoder = json.JSONDecoder()
+    with path.open("r", encoding="utf-8-sig") as handle:
+        buffer = ""
+        eof = False
+
+        def refill() -> None:
+            nonlocal buffer, eof
+            chunk = handle.read(65536)
+            if chunk:
+                buffer += chunk
+            else:
+                eof = True
+
+        while not buffer.strip() and not eof:
+            refill()
+        buffer = buffer.lstrip()
+        if not buffer.startswith("["):
+            raise ValueError("RAW file must contain a JSON array")
+        buffer = buffer[1:]
+        first = True
+        while True:
+            while not buffer.strip() and not eof:
+                refill()
+            buffer = buffer.lstrip()
+            if not first:
+                if not buffer and eof:
+                    raise ValueError("Incomplete RAW JSON array")
+                if buffer.startswith("]"):
+                    return
+                if not buffer.startswith(","):
+                    raise ValueError("Invalid RAW JSON array separator")
+                buffer = buffer[1:].lstrip()
+            elif buffer.startswith("]"):
+                return
+            first = False
+            while True:
+                try:
+                    row, end = decoder.raw_decode(buffer)
+                    buffer = buffer[end:]
+                    yield row
+                    break
+                except json.JSONDecodeError as exc:
+                    if eof:
+                        raise ValueError("Malformed RAW JSON row") from exc
+                    refill()
+
+
+def get_window(entity_id: str, *, include_rows: bool = False,
+               start_epoch: int | None = None, end_epoch: int | None = None,
+               limit: int = 500) -> dict:
     row, body = _note(entity_id)
-    if not re.fullmatch(r"data\.window_[0-9a-f]{8}", entity_id) or row["type"] != "data":
+    if row["type"] != "data":
         raise ValueError("Expected a RAW window entity ID")
     metadata = _frontmatter(body)[0]
     if metadata.get("data_kind") != "window":
         raise ValueError("Entity is not a RAW window")
     path = _inside(metadata["raw_path"], "08_DATA/Raw/")
-    return {"id": entity_id, "file": row["file"], "status": row["status"],
+    result = {"id": entity_id, "file": row["file"], "status": row["status"],
             "authority": row["authority"], "metadata": metadata,
             "data_available": path.is_file(),
             "reason": None if path.is_file() else "vault_raw_unavailable"}
+    if not include_rows:
+        if start_epoch is not None or end_epoch is not None:
+            raise ValueError("A time range requires include_rows=true")
+        return result
+    start = metadata["first_epoch"] if start_epoch is None else start_epoch
+    end = metadata["last_epoch"] if end_epoch is None else end_epoch
+    if (not isinstance(start, int) or isinstance(start, bool)
+            or not isinstance(end, int) or isinstance(end, bool)
+            or not metadata["first_epoch"] <= start <= end <= metadata["last_epoch"]):
+        raise ValueError("Invalid time range for registered RAW window")
+    if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 1000:
+        raise ValueError("RAW row limit must be 1-1000")
+    if not path.is_file():
+        return result | {"rows": [], "truncated": False, "requested_range": [start, end]}
+    rows = []
+    truncated = False
+    for candle in _iter_json_array(path):
+        stamp = candle.get("time") if isinstance(candle, dict) else None
+        if not isinstance(stamp, int):
+            raise ValueError("RAW row has no integer time")
+        if stamp < start:
+            continue
+        if stamp > end:
+            break
+        if len(rows) == limit:
+            truncated = True
+            break
+        rows.append(candle)
+    return result | {"rows": rows, "truncated": truncated,
+                     "requested_range": [start, end],
+                     "integrity_status": "not_verified_by_window_read"}
 
 
 def read_evidence(relative: str, start_line: int = 1, line_count: int = 40) -> dict:
+    entity = _entities().get(relative)
+    if entity is not None:
+        if entity.get("type") != "source":
+            raise ValueError("Evidence entity must be a source entity")
+        fields, _ = _frontmatter(_read_indexed_note(relative, entity))
+        relative = fields.get("source_path", "")
     path = _inside(relative, "06_SOURCE/Code/")
     if path.suffix not in {".py", ".js", ".md"} or not path.is_file():
         raise ValueError("Evidence must be a captured source or reference file")
@@ -344,13 +557,12 @@ def read_evidence(relative: str, start_line: int = 1, line_count: int = 40) -> d
     if start > len(lines):
         raise ValueError("Start line exceeds file length")
     end = min(len(lines), start + count - 1)
-    mixed = relative in {
-        "06_SOURCE/Code/engine/pipeline/e_zone_detector.py",
-        "06_SOURCE/Code/engine/pipeline/lifecycle_engine.py",
-        "06_SOURCE/Code/engine/bridge/trading_pipeline.py",
-    }
+    source_row = next((row for entity_id, row in _entities().items()
+                       if row.get("type") == "source"
+                       and _frontmatter(_read_indexed_note(entity_id, row))[0].get("source_path") == relative), None)
+    mixed = bool(source_row and source_row.get("affected_by_known_invalid_order_route"))
     return {"path": relative, "sha256": digest, "authority": "executable",
-            "warning": ("Mixed source: current Order_B/C-dependent regions are known-invalid; an excerpt is not normative approval."
+            "warning": ("Mixed source: dependent regions are known-invalid; an excerpt is not normative approval."
                         if mixed else None), "start_line": start,
             "end_line": end, "lines": [{"line": n, "text": lines[n-1]} for n in range(start, end+1)]}
 
@@ -364,15 +576,10 @@ def verify_package(mode: str = "full-data") -> dict:
     warnings: list[str] = []
     known_pending: list[str] = []
     entities = _entities()
-    if "algorithm.orderaudit" in entities:
-        failures.append("inactive_order_audit_entity")
-    for entity_id in ORDER_CONTRACTS:
-        if entity_id not in entities:
-            failures.append(f"order_contract_missing:{entity_id}")
     try:
         registry = _reference_registry()
-        if {row["id"] for row in registry["references"]} != {"bullish_hpzr6", "bearish_hpzr6"}:
-            failures.append("reference_registry_incomplete")
+        if not isinstance(registry.get("references"), list):
+            raise ValueError("Reference registry has no references list")
         for row in registry["references"]:
             relative = row["repository_relative_path"]
             if (not relative.startswith("engine/algorithms/") or "\\" in relative or ":" in relative
@@ -382,10 +589,16 @@ def verify_package(mode: str = "full-data") -> dict:
         registry = {"references": []}
         failures.append("reference_registry_invalid")
     indexed_paths = set()
+    expected_edges = []
     for entity_id, row in entities.items():
         indexed_paths.add(row["file"])
         try:
-            _read_indexed_note(entity_id, row)
+            fields, _ = _frontmatter(_read_indexed_note(entity_id, row))
+            for field in RELATION_FIELDS:
+                for target in fields.get(field, []):
+                    expected_edges.append({"from": entity_id,
+                                           "type": "relates_to" if field == "related_entities" else field,
+                                           "to": target})
         except (OSError, ValueError, KeyError, json.JSONDecodeError):
             failures.append(row["file"])
     fixture_errors, fixture_warnings, fixture_known_pending = _fixture_source_review_issues(entities)
@@ -401,7 +614,9 @@ def verify_package(mode: str = "full-data") -> dict:
             failures.append(relative)
     try:
         edges = _json("_INDEX/relations.json")["relations"]
-        if any(edge["from"] not in entities or edge["to"] not in entities for edge in edges):
+        ordered = lambda items: sorted(items, key=lambda edge: (edge["from"], edge["type"], edge["to"]))
+        if (any(edge["from"] not in entities or edge["to"] not in entities for edge in edges)
+                or ordered(edges) != ordered(expected_edges)):
             failures.append("_INDEX/relations.json")
     except (OSError, ValueError, KeyError, TypeError):
         failures.append("_INDEX/relations.json")
@@ -420,22 +635,25 @@ def verify_package(mode: str = "full-data") -> dict:
     pinned_code = {row.get("mirror", row.get("source", row.get("path"))) for row in rows
                    if row.get("mirror", row.get("source", row.get("path"))).startswith("06_SOURCE/Code/")}
     code_root = ROOT / "06_SOURCE/Code"
-    required_engine = {f"06_SOURCE/Code/engine/pipeline/{name}.py" for name in (
-        "reaction_engine", "blue_line_detector", "a_zone_detector", "s_zone_detector",
-        "e_zone_detector", "lifecycle_engine", "direction_policy", "core_utils")}
-    required_engine.add("06_SOURCE/Code/engine/bridge/trading_pipeline.py")
-    if not required_engine.issubset(pinned_code):
-        failures.append("incomplete_engine_source_coverage")
     if code_root.is_dir():
         for path in code_root.rglob("*"):
             if path.is_file() and path.suffix in {".py", ".js", ".md"}:
                 relative = path.relative_to(ROOT).as_posix()
                 if relative not in pinned_code:
                     failures.append(relative)
-    datasets = [entity_id for entity_id in entities
-                if re.fullmatch(r"data\.dataset_[0-9a-f]{8}", entity_id)]
-    windows = [entity_id for entity_id in entities
-               if re.fullmatch(r"data\.window_[0-9a-f]{8}", entity_id)]
+    datasets = []
+    windows = []
+    for entity_id, row in entities.items():
+        if row.get("type") != "data":
+            continue
+        try:
+            kind = _frontmatter(_read_indexed_note(entity_id, row))[0].get("data_kind")
+            if kind == "dataset":
+                datasets.append(entity_id)
+            elif kind == "window":
+                windows.append(entity_id)
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
     sync_path = ROOT / "_INDEX/sync-status.json"
     sync_status = json.loads(sync_path.read_text(encoding="utf-8-sig")) if sync_path.is_file() else None
     reference_availability = _external_reference_availability(registry, failures)

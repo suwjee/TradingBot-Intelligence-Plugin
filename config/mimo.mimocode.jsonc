@@ -1,0 +1,9 @@
+{
+  "$schema": "https://mimo.xiaomi.com/mimocode/config.json",
+  "mcp": {
+    "tradingbot_knowledge": {
+      "type": "local",
+      "command": ["<PYTHON_EXECUTABLE>", "-B", "<PLUGIN_ROOT>/scripts/launch_mcp.py"]
+    }
+  }
+}

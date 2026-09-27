@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "tradingbot_knowledge": {
+      "command": "<PYTHON_EXECUTABLE>",
+      "args": ["-B", "<PLUGIN_ROOT>/scripts/launch_mcp.py"]
+    }
+  }
+}

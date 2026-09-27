@@ -1,1 +1,1 @@
-"""Maintenance tooling and its isolated tests."""
+"""Maintenance tooling for explicit source synchronization."""

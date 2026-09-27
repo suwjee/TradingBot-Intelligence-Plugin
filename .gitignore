@@ -1,5 +1,6 @@
 __pycache__/
 *.py[cod]
 .venv/
+.plugin-package/
 .pytest_cache/
 *.tmp
