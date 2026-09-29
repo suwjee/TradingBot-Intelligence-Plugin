@@ -7,15 +7,18 @@ import json
 from pathlib import Path
 import shutil
 import tempfile
+import sys
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from integrity import strict_json_loads
 OUTPUT_PARENT = ROOT / ".plugin-package"
 OUTPUT = OUTPUT_PARENT / "tradingbot-intelligence"
 FILES = (
     "plugin.json", "mcp.json", "requirements.txt", "README.md", "Quick-Start.md",
     "Operational-Runbook.md", "TECHNICAL_ARCHITECTURE.md", "Tool-Catalog.md",
     "MCP-Contract.md", "Plugin-Contract.md", "Context-Recipes.md", "Version-Pinning.md",
-    "vault_reader.py", "vault_cli.py", "mcp_server.py", "runtime_doctor.py",
+    "vault_reader.py", "vault_cli.py", "mcp_server.py", "runtime_doctor.py", "integrity.py",
     "scripts/configure_vault.py", "scripts/launch_mcp.py", "scripts/smoke_mcp.py",
     "skills/tradingbot-knowledge/SKILL.md", "config/README.md", "config/codex.ps1",
     "config/mimo.mimocode.jsonc", "config/generic-stdio.json",
@@ -32,7 +35,7 @@ def build() -> dict:
     target = OUTPUT.resolve()
     if target.parent != parent or target.name != "tradingbot-intelligence":
         raise RuntimeError("Package target escaped its fixed build directory")
-    version = json.loads((ROOT / "plugin.json").read_text(encoding="utf-8"))["version"]
+    version = strict_json_loads((ROOT / "plugin.json").read_text(encoding="utf-8"))["version"]
     parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="build-", dir=parent) as temp_name:
         temporary = Path(temp_name)

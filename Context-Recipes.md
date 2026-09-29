@@ -6,6 +6,6 @@ For an unresolved or disputed entity, request it explicitly or use diagnostic se
 
 For a fixture, read its case note and linked dataset or window. Check source fixture anchors and use full-data verification before a RAW integrity claim. A recorded expected output is not proof of a fresh calculation.
 
-For an algorithm-reference quotation, obtain the reference ID from the Vault registry and configure `TRADINGBOT_ENGINE_ROOT`. Use the reference tool only after its hash check passes. The excerpt remains external evidence.
+For an algorithm-reference quotation, obtain the current reference ID from the local Vault registry. The tool validates local Registry/Manifest identity and declared version/direction before returning lines. An Engine checkout is optional; when configured, its reference must match. Preserve the synchronized specification authority scope.
 
 For a post-sync answer, inspect `_INDEX/sync-status.json`, run the Vault's index builder in check mode, verify this plugin in both modes, and compare the relevant production checkout separately. A new source hash does not approve a semantic change.

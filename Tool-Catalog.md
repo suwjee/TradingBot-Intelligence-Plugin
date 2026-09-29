@@ -5,14 +5,16 @@ The MCP server exposes eight read-only tools. Each uses the current configured V
 | MCP tool | CLI command | Result |
 | --- | --- | --- |
 | `search_knowledge` | `search QUERY` | Ranked indexed notes; optional type, authority, status, diagnostic filters, and offset. Each hit reports total matches and continuation offset. |
-| `get_knowledge` | `entity ID` | Complete note and indexed authority metadata, subject to an explicit configurable byte cap. |
-| `trace_relations` | `relations ID` | Incoming/outgoing edges and bounded directional traversal. |
+| `get_knowledge` | `entity ID_OR_NAME` | Complete note and indexed authority metadata; canonical name or alias resolves to the same stable ID, subject to the configurable byte cap. |
+| `trace_relations` | `relations ID_OR_NAME` | Incoming/outgoing edges and bounded directional traversal with the same name/alias resolution. |
 | `get_dataset` | `dataset ID` | Registered RAW metadata and file availability. |
 | `get_raw_window` | `window ID` | Registered inclusive range; optional bounded rows. |
 | `read_source_evidence` | `evidence SOURCE_ID_OR_PATH` | At most 120 pinned, hash-checked source lines. |
-| `read_algorithm_reference_evidence` | `reference-evidence ID` | At most 120 registered, hash-checked external reference lines. |
+| `read_algorithm_reference_evidence` | `reference-evidence ID` | At most 120 local, Registry/Manifest-pinned reference lines; optional external hash/version/direction cross-check. |
 | `verify_vault` | `verify --mode knowledge|full-data` | Integrity, inventory, known pending, and optional reference availability. |
 
 `vault_cli.py doctor` adds a real stdio MCP check. Search and relations hide unresolved or invalid-for-reasoning entities by default; diagnostic flags do not change authority. Full-data verification is required for retained RAW integrity claims.
+
+Search reads validated canonical name/alias metadata independently of title or body. Single-letter queries match exact names/IDs/aliases only. Case-folded label collisions reject the Vault instead of choosing an arbitrary owner. Current Source pins and configured external evidence must agree before Source-backed knowledge is returned. Changed note bytes require regenerated indexes. Source/Reference narrative conflicts produce warnings while preserving executable authority and the separate documented claim.
 
 Search returns at most 25 hits per page and reports `truncated` and `next_offset` on each hit. `get_knowledge` defaults to a 1 MiB note cap (`max_bytes`, at most 4 MiB); oversized notes return `RESPONSE_TOO_LARGE` rather than a partial note. Relation depth is at most five, source/reference excerpts at most 120 lines, and RAW window rows at most 1,000.

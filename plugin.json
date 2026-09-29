@@ -1,8 +1,8 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "tradingbot-intelligence",
-  "version": "0.3.6",
-  "description": "Read the standalone TradingBot Knowledge Vault with source, authority, and RAW provenance checks.",
+  "version": "0.3.8",
+  "description": "Read current TradingBot Vault knowledge and local references with strict integrity checks and optional Engine verification.",
   "author": {
     "name": "TradingBot Project"
   },
@@ -12,13 +12,13 @@
       "interface": {
         "displayName": "TradingBot Knowledge",
         "shortDescription": "Source-grounded TradingBot knowledge",
-        "longDescription": "Inspect the standalone TradingBot Knowledge Vault, its retained source evidence, and RAW provenance with explicit authority boundaries.",
+        "longDescription": "Inspect current Vault knowledge, local Algorithm References, active Order_A/Order_B and OrderAudit with explicit authority and integrity checks.",
         "developerName": "TradingBot Project",
         "category": "Productivity",
         "capabilities": ["Read"],
         "defaultPrompt": [
           "Use TradingBot Knowledge to explain an algorithm and cite retained Vault source evidence.",
-          "Check what the Vault can currently verify about Order_A and its pending dependencies."
+          "Verify current Order_A, Order_B and OrderAudit contracts, local references, and intentional empty data stores."
         ]
       }
     }

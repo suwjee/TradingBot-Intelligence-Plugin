@@ -5,6 +5,10 @@ import argparse
 import json
 from pathlib import Path
 import os
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from integrity import strict_json_loads
 
 
 def config_path() -> Path:
@@ -27,7 +31,7 @@ def configure(vault: Path, destination: Path | None = None,
         settings["python_executable"] = str(executable)
     elif target.is_file():
         try:
-            previous = json.loads(target.read_text(encoding="utf-8"))
+            previous = strict_json_loads(target.read_text(encoding="utf-8"))
             if isinstance(previous.get("python_executable"), str):
                 settings["python_executable"] = previous["python_executable"]
         except (OSError, ValueError, TypeError):

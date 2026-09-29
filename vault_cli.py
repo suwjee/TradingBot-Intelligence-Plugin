@@ -1,4 +1,4 @@
-"""Dependency-free command line interface for AI hosts without MCP."""
+"""Command line knowledge interface for AI hosts without MCP transport."""
 from __future__ import annotations
 
 import argparse

@@ -1,0 +1,1 @@
+"""Public retrieval contract tests."""

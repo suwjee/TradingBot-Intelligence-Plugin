@@ -9,10 +9,14 @@ import argparse
 import ast
 import hashlib
 import json
+import re
 from pathlib import Path
 import subprocess
 import sys
 from datetime import datetime, timezone
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from integrity import strict_json_loads
 
 def git(project: Path, *args: str) -> bytes:
     result = subprocess.run(["git", "-C", str(project), *args],
@@ -29,8 +33,24 @@ def digest(data: bytes) -> str:
 def frontmatter(path: Path) -> tuple[dict, str]:
     raw = path.read_text(encoding="utf-8-sig")
     head, body = raw[4:].split("\n---\n", 1)
-    return {key: json.loads(value) for line in head.splitlines()
-            for key, value in [line.split(": ", 1)]}, body
+    fields = {}
+    for line in head.splitlines():
+        key, value = line.split(": ", 1)
+        if key in fields:
+            raise ValueError(f"Duplicate frontmatter field: {key}")
+        fields[key] = strict_json_loads(value)
+    return fields, body
+
+
+def reference_metadata(content: bytes) -> dict:
+    """Read declared document identity without inferring trading semantics."""
+    text = content.decode("utf-8-sig")
+    fields = {"line_count": len(text.splitlines())}
+    for key, label in (("version", "Document Version"), ("direction", "Target Direction")):
+        match = re.search(r"^\*\*" + label + r":\*\* `([^`]+)`", text, re.MULTILINE)
+        if match:
+            fields[key] = match.group(1)
+    return fields
 
 
 def write_note(path: Path, fields: dict, body: str) -> None:
@@ -51,7 +71,7 @@ def sync(project: Path, vault: Path, check: bool = False) -> dict:
         if dependency.returncode:
             raise RuntimeError("The sync interpreter needs jsonschema; install maintenance/requirements.txt")
     manifest_path = vault / "_INDEX/source-hashes.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
+    manifest = strict_json_loads(manifest_path.read_text(encoding="utf-8-sig"))
     head = git(project, "rev-parse", "HEAD").decode().strip()
     rows = manifest["files"] + manifest["algorithm_references"] + [
         row for row in manifest.get("supporting_files", [])
@@ -84,7 +104,7 @@ def sync(project: Path, vault: Path, check: bool = False) -> dict:
         if digest(content) != row["sha256"]:
             changed.append(relative)
     registry_path = vault / "06_SOURCE/References/registry.json"
-    registry = json.loads(registry_path.read_text(encoding="utf-8-sig")) if registry_path.is_file() else None
+    registry = strict_json_loads(registry_path.read_text(encoding="utf-8-sig")) if registry_path.is_file() else None
     changed_references: dict[str, bytes] = {}
     dirty_reference_paths: list[str] = []
     missing_reference_commits: list[str] = []
@@ -143,6 +163,9 @@ def sync(project: Path, vault: Path, check: bool = False) -> dict:
                 if content is not None:
                     row["sha256"] = digest(content)
                     row["bytes"] = len(content)
+                    row.update(reference_metadata(content))
+                    row["name"] = Path(row["repository_relative_path"]).name
+                    row["reconstruction_status"] = "needs_review"
             remember(registry_path)
             registry_path.write_text(json.dumps(registry, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
             registry_row = next((row for row in manifest.get("supporting_files", [])
@@ -166,6 +189,9 @@ def sync(project: Path, vault: Path, check: bool = False) -> dict:
                 target.write_bytes(captured[relative])
                 row["sha256"] = digest(captured[relative])
                 row["bytes"] = len(captured[relative])
+                row["line_count"] = len(captured[relative].decode("utf-8-sig").splitlines())
+                if row in manifest["algorithm_references"]:
+                    row.update(reference_metadata(captured[relative]))
             manifest["source_commit"] = head
             manifest["created_utc"] = status["captured_utc"]
             remember(manifest_path)
@@ -189,7 +215,7 @@ def sync(project: Path, vault: Path, check: bool = False) -> dict:
                     write_note(path, fields, body)
         previous_path = vault / "_INDEX/sync-status.json"
         if previous_path.is_file() and not changed:
-            previous = json.loads(previous_path.read_text(encoding="utf-8-sig"))
+            previous = strict_json_loads(previous_path.read_text(encoding="utf-8-sig"))
             if previous.get("review_state") == "needs_review":
                 status["review_state"] = "needs_review"
                 status["changed_source_paths"] = previous.get("changed_source_paths", [])
@@ -197,6 +223,8 @@ def sync(project: Path, vault: Path, check: bool = False) -> dict:
         previous_path.write_text(json.dumps(status, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         for name in ("entities.json", "relations.json", "files.json", "source-map.json", "knowledge-graph.json"):
             remember(vault / "_INDEX" / name)
+        for name in ("source-structure.json", "knowledge-model.json"):
+            remember(vault / "_GENERATED" / name)
         result = subprocess.run([sys.executable, "-B", str(builder)],
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         status["index_check"] = "passed" if result.returncode == 0 else "failed"

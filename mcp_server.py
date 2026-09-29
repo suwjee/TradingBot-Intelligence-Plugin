@@ -73,7 +73,7 @@ def read_source_evidence(path: str, start_line: int = 1, line_count: int = 40) -
 
 @mcp.tool()
 def read_algorithm_reference_evidence(reference_id: str, start_line: int = 1, line_count: int = 40) -> dict:
-    """Read an external reference only after matching its Vault registry hash."""
+    """Read a pinned local reference and optionally cross-verify its Engine copy."""
     return _call(reader.read_algorithm_reference_evidence, reference_id, start_line, line_count)
 
 

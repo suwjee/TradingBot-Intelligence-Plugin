@@ -14,7 +14,7 @@ $env:TRADINGBOT_PLUGIN_PYTHON = (Resolve-Path .\.venv\Scripts\python.exe).Path
 .\.venv\Scripts\python.exe -B scripts/launch_mcp.py
 ```
 
-The last command starts a stdio server and waits for an MCP host; run it under a host or use `scripts/smoke_mcp.py` to test. The configured interpreter path is saved outside the plugin, so Codex's installed copy can find the source checkout's virtual environment. Set `TRADINGBOT_ENGINE_ROOT` to an available TradingBot checkout when external algorithm-reference excerpts are needed. For Codex, add this directory as a local plugin marketplace, install `tradingbot-intelligence@tradingbot-local`, then start a new task:
+The last command starts a stdio server and waits for an MCP host; run it under a host or use `scripts/smoke_mcp.py` to test. The configured interpreter path is saved outside the plugin, so Codex's installed copy can find the source checkout's virtual environment. Local reference excerpts work directly from the Vault. Set `TRADINGBOT_ENGINE_ROOT` only to cross-verify an optional matching TradingBot checkout. Zero datasets and zero fixtures are valid EMPTY_BY_DESIGN stores. For Codex, add this directory as a local plugin marketplace, install `tradingbot-intelligence@tradingbot-local`, then start a new task:
 
 ```powershell
 codex plugin marketplace add <PLUGIN_ROOT>
